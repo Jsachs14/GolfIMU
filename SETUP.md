@@ -7,6 +7,7 @@ This guide explains how to set up and run the GolfIMU backend system.
 - Python 3.9 or higher
 - pip (Python package installer)
 - Git (for version control)
+- Redis server (for data storage)
 
 ## Initial Setup
 
@@ -36,6 +37,54 @@ venv\Scripts\activate
 ```bash
 pip install -r requirements.txt
 ```
+
+### 5. Setup Redis (IMPORTANT for Data Persistence)
+
+#### Install Redis
+**On macOS:**
+```bash
+brew install redis
+```
+
+**On Ubuntu/Debian:**
+```bash
+sudo apt-get install redis-server
+```
+
+**On Windows:**
+Download from https://redis.io/download
+
+#### Configure Redis for Persistent Storage
+To ensure your golf swing data survives computer restarts:
+
+1. **Use the provided Redis config:**
+```bash
+# Start Redis with persistent storage
+redis-server redis.conf
+```
+
+2. **Or configure manually:**
+```bash
+# Edit Redis config (usually /etc/redis/redis.conf)
+# Add these lines:
+save 60 1
+save 300 10
+save 900 100
+appendonly yes
+appendfsync everysec
+```
+
+3. **Test Redis persistence:**
+```bash
+# Start Redis
+redis-server
+
+# In another terminal, test connection
+redis-cli ping
+# Should return: PONG
+```
+
+**⚠️ IMPORTANT:** Without Redis persistence configured, your swing data will be lost when you restart your computer!
 
 ## Running Tests
 
@@ -68,7 +117,12 @@ python -m pytest backend/tests/ --tb=short
 
 ## Running the Backend
 
-### Start the Backend
+### 1. Start Redis (if not already running)
+```bash
+redis-server redis.conf
+```
+
+### 2. Start the Backend
 ```bash
 python backend/run_backend.py
 ```
@@ -86,6 +140,34 @@ Once the backend is running, you can use these commands:
 - `statistics` - Show swing statistics
 - `recent_swings [count]` - Show recent swings
 - `quit` - Exit the backend
+
+## Data Persistence
+
+### What Data is Stored
+- **Session Configurations**: User settings, club specifications
+- **Swing Data**: Complete IMU readings for each swing
+- **Swing Events**: Impact detection, swing timing
+- **IMU Buffers**: Real-time sensor data
+
+### Data Location
+With Redis persistence enabled, data is stored in:
+- **RDB file**: `dump.rdb` (snapshot of data)
+- **AOF file**: `golfimu.aof` (append-only log of all operations)
+
+### Data Recovery
+Your data will survive:
+- ✅ Computer restarts
+- ✅ Redis server restarts
+- ✅ Application crashes
+- ✅ Power outages
+
+### Backup Data
+To backup your golf data:
+```bash
+# Copy Redis data files
+cp dump.rdb golfimu_backup.rdb
+cp golfimu.aof golfimu_backup.aof
+```
 
 ## Configuration
 
@@ -133,6 +215,7 @@ GolfIMU/
 │       ├── test_serial_manager.py
 │       ├── test_session_manager.py
 │       └── conftest.py
+├── redis.conf               # Redis persistence configuration
 ├── requirements.txt         # Python dependencies
 ├── SETUP.md               # This file
 └── README.md              # Project documentation
@@ -163,6 +246,12 @@ GolfIMU/
 - Ensure the virtual environment is activated
 - Check that all dependencies are installed: `pip install -r requirements.txt`
 
+**Redis Issues:**
+- **Redis not running**: Start with `redis-server redis.conf`
+- **Connection refused**: Check if Redis is running on port 6379
+- **Data lost after restart**: Ensure Redis persistence is configured
+- **Permission denied**: Check Redis file permissions
+
 **Test Failures:**
 - Check that Redis is running (if tests require it)
 - Ensure all dependencies are up to date
@@ -172,6 +261,11 @@ GolfIMU/
 - Verify Arduino is connected and recognized
 - Check serial port permissions
 - Ensure correct baud rate settings
+
+**Data Persistence Issues:**
+- Check Redis logs: `tail -f redis.log`
+- Verify Redis config: `redis-cli config get save`
+- Test persistence: Add data, restart Redis, check if data remains
 
 ## Future Additions
 
@@ -184,6 +278,8 @@ This section will be updated as new features are added to the project.
 - [ ] User authentication system
 - [ ] Database integration
 - [ ] Mobile app support
+- [ ] Cloud data synchronization
+- [ ] Advanced data analytics
 
 ### Development Workflow
 1. Create feature branch: `git checkout -b feature/new-feature`
