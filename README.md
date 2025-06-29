@@ -246,20 +246,12 @@ Your data survives:
 
 ---
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
 ## 🙏 Acknowledgments
 
-- **Noah** - For being the reluctant golf partner who inspired this project
-- **Jonah** - For having a golf game that desperately needs fixing
-- **Redis** - For providing the high-performance data storage
-- **Pydantic** - For robust data validation and serialization
+- **Noah** - For being the reluctant golf partner who inspired this project (you better play ass)
+- **Jonah** - For having a golf game that desperately needs fixing (fuck the hook)
 
----
-
-**Built with ❤️ for better golf swings everywhere**
 
