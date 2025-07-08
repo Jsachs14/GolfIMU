@@ -11,6 +11,7 @@ import os
 # Add the project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from global_config import *
 from backend.models import IMUData, SessionConfig, SwingEvent, ProcessedMetrics, RedisKey, SwingData
 from backend.redis_manager import RedisManager
 from backend.serial_manager import SerialManager
@@ -37,8 +38,8 @@ def mock_serial_connection():
     """Mock serial connection for testing"""
     mock_serial = Mock()
     mock_serial.is_open = True
-    # Return proper IMU data format for read_imu_data test
-    mock_serial.readline.return_value = b"1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0\n"
+    # Return proper IMU data format for read_imu_data test (JSON format)
+    mock_serial.readline.return_value = b'{"ax": 1.0, "ay": 2.0, "az": 3.0, "gx": 4.0, "gy": 5.0, "gz": 6.0, "mx": 7.0, "my": 8.0, "mz": 9.0, "t": 1640995200000}\n'
     mock_serial.write.return_value = 10
     return mock_serial
 
@@ -101,12 +102,12 @@ def sample_swing_event():
 def test_settings():
     """Test settings configuration"""
     return Settings(
-        redis_host="localhost",
-        redis_port=6379,
-        redis_db=1,  # Use different DB for testing
-        serial_port="/dev/tty.test",
-        serial_baudrate=115200,
-        imu_sample_rate=200,
+        redis_host=REDIS_HOST,
+        redis_port=REDIS_PORT,
+        redis_db=TEST_REDIS_DB,  # Use different DB for testing
+        serial_port=TEST_SERIAL_PORT,
+        serial_baudrate=SERIAL_BAUDRATE,
+        imu_sample_rate=TEST_IMU_SAMPLE_RATE,
         buffer_size=100
     )
 

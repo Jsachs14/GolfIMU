@@ -178,38 +178,31 @@ class SerialManager:
         return self.send_command("REQUEST_SWING")
 
     def read_imu_data(self) -> Optional[IMUData]:
-        """Read single IMU data point from Arduino"""
+        """Read single IMU data point from Arduino (expects JSON line)"""
         if not self.is_connected or not self.serial_connection:
             return None
         
         try:
             line = self.serial_connection.readline().decode('utf-8').strip()
-            
             if not line:
                 return None
             
-            # Parse IMU data (comma-separated format: ax,ay,az,gx,gy,gz,mx,my,mz)
-            values = line.split(',')
-            if len(values) != 9:
-                return None
-            
-            # Convert to float values
-            imu_values = [float(val) for val in values]
-            
+            # Parse IMU data (JSON format)
+            imu_dict = json.loads(line)
             return IMUData(
-                ax=imu_values[0],
-                ay=imu_values[1],
-                az=imu_values[2],
-                gx=imu_values[3],
-                gy=imu_values[4],
-                gz=imu_values[5],
-                mx=imu_values[6],
-                my=imu_values[7],
-                mz=imu_values[8],
-                timestamp=datetime.now()
+                ax=imu_dict["ax"],
+                ay=imu_dict["ay"],
+                az=imu_dict["az"],
+                gx=imu_dict["gx"],
+                gy=imu_dict["gy"],
+                gz=imu_dict["gz"],
+                mx=imu_dict["mx"],
+                my=imu_dict["my"],
+                mz=imu_dict["mz"],
+                timestamp=datetime.fromtimestamp(imu_dict["t"] / 1000.0)  # ms to seconds
             )
-            
-        except (ValueError, IndexError) as e:
+        
+        except (ValueError, KeyError, json.JSONDecodeError) as e:
             print(f"Error parsing IMU data: {e}")
             return None
         except Exception as e:

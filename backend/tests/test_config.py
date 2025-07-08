@@ -20,7 +20,7 @@ class TestSettings:
         assert settings.serial_port == "/dev/tty.usbserial-*"
         assert settings.serial_baudrate == 115200
         assert settings.serial_timeout == 1.0
-        assert settings.imu_sample_rate == 200
+        assert settings.imu_sample_rate == 1000
         assert settings.buffer_size == 1000
         assert settings.default_impact_threshold == 30.0
     
