@@ -37,6 +37,11 @@ SERIAL_PORT_PATTERN = "/dev/tty.usbserial-*"  # Default for Mac
 IMU_BUFFER_SIZE = 1000        # Number of IMU samples to keep in ring buffer
 SWING_BUFFER_SIZE = 100       # Number of swings to keep in memory
 
+# Performance Optimization
+IMU_TRIM_INTERVAL = 1000      # Only trim Redis buffer every N operations
+IMU_MAX_BUFFER_SIZE = 50000   # Maximum IMU data points to keep in Redis
+REDIS_BATCH_SIZE = 100        # Batch size for Redis operations
+
 # Impact Detection
 DEFAULT_IMPACT_THRESHOLD_G = 30.0  # Default g-force threshold for impact detection
 MIN_IMPACT_THRESHOLD_G = 5.0       # Minimum allowed threshold

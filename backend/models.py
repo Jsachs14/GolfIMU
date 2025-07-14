@@ -18,6 +18,10 @@ class IMUData(BaseModel):
     mx: float = Field(..., description="Magnetometer X (μT)")
     my: float = Field(..., description="Magnetometer Y (μT)")
     mz: float = Field(..., description="Magnetometer Z (μT)")
+    qw: float = Field(..., description="Quaternion W component")
+    qx: float = Field(..., description="Quaternion X component")
+    qy: float = Field(..., description="Quaternion Y component")
+    qz: float = Field(..., description="Quaternion Z component")
     timestamp: datetime = Field(default_factory=datetime.now)
 
 

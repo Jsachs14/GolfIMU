@@ -4,6 +4,8 @@ Main GolfIMU backend application
 import time
 import signal
 import sys
+import json
+from datetime import datetime
 from typing import Optional
 
 from .config import settings
@@ -40,7 +42,16 @@ class GolfIMUBackend:
                      club_mass: float,
                      face_normal_calibration: Optional[list] = None,
                      impact_threshold: Optional[float] = None) -> bool:
-        """Start a new session"""
+        """Start a new session.
+        
+        :param user_id: User identifier
+        :param club_id: Club identifier
+        :param club_length: Club length in meters
+        :param club_mass: Club mass in kg
+        :param face_normal_calibration: Optional face normal calibration
+        :param impact_threshold: Optional impact threshold in g-force
+        :return: True if session started successfully, False otherwise
+        """
         try:
             session_config = self.session_manager.create_session(
                 user_id=user_id,
@@ -57,7 +68,11 @@ class GolfIMUBackend:
             return False
     
     def connect_arduino(self, port: Optional[str] = None) -> bool:
-        """Connect to Arduino"""
+        """Connect to Arduino.
+        
+        :param port: Serial port to connect to (auto-detect if None)
+        :return: True if connection successful, False otherwise
+        """
         return self.serial_manager.connect(port)
     
     def disconnect_arduino(self):
@@ -65,7 +80,10 @@ class GolfIMUBackend:
         self.serial_manager.disconnect()
     
     def send_session_config_to_arduino(self) -> bool:
-        """Send current session configuration to Arduino"""
+        """Send current session configuration to Arduino.
+        
+        :return: True if sent successfully, False otherwise
+        """
         if not self.session_manager.get_current_session():
             print("No active session. Please start a session first.")
             return False
@@ -77,7 +95,10 @@ class GolfIMUBackend:
         return self.serial_manager.send_session_config(self.session_manager.get_current_session())
     
     def start_swing_monitoring(self) -> bool:
-        """Start swing monitoring on Arduino"""
+        """Start swing monitoring on Arduino.
+        
+        :return: True if started successfully, False otherwise
+        """
         if not self.serial_manager.is_connected:
             print("Arduino not connected. Please connect first.")
             return False
@@ -85,7 +106,10 @@ class GolfIMUBackend:
         return self.serial_manager.start_swing_monitoring()
     
     def stop_swing_monitoring(self) -> bool:
-        """Stop swing monitoring on Arduino"""
+        """Stop swing monitoring on Arduino.
+        
+        :return: True if stopped successfully, False otherwise
+        """
         if not self.serial_manager.is_connected:
             print("Arduino not connected. Please connect first.")
             return False
@@ -93,7 +117,10 @@ class GolfIMUBackend:
         return self.serial_manager.stop_swing_monitoring()
     
     def wait_for_swing_data(self) -> Optional[SwingData]:
-        """Wait for complete swing data from Arduino"""
+        """Wait for complete swing data from Arduino.
+        
+        :return: SwingData object if received, None otherwise
+        """
         if not self.session_manager.get_current_session():
             print("No active session. Please start a session first.")
             return None
@@ -164,21 +191,15 @@ class GolfIMUBackend:
             self.stop_swing_monitoring()
     
     def _process_swing_data(self, swing_data: SwingData):
-        """Process swing data (placeholder for analyzer functions)"""
-        # This is where you'll add your analyzer functions
-        # For now, just log some basic info
+        """Process swing data (placeholder for analysis functions).
+        
+        :param swing_data: Swing data to process
+        """
+        # TODO: Implement swing analysis
         print(f"Processing swing: {swing_data.swing_id}")
         print(f"  Duration: {swing_data.swing_duration:.2f}s")
         print(f"  Impact g-force: {swing_data.impact_g_force:.1f}g")
         print(f"  Data points: {len(swing_data.imu_data_points)}")
-        
-        # Log swing event
-        self.session_manager.log_swing_event("swing_completed", {
-            "swing_id": swing_data.swing_id,
-            "duration": swing_data.swing_duration,
-            "impact_g_force": swing_data.impact_g_force,
-            "data_points": len(swing_data.imu_data_points)
-        })
     
     def stop(self):
         """Stop the backend"""
@@ -188,7 +209,10 @@ class GolfIMUBackend:
         print("GolfIMU backend stopped")
     
     def get_status(self) -> dict:
-        """Get backend status"""
+        """Get backend status.
+        
+        :return: Dictionary containing status information
+        """
         arduino_connected, arduino_port = self.serial_manager.get_connection_status()
         current_session = self.session_manager.get_current_session()
         
@@ -204,15 +228,25 @@ class GolfIMUBackend:
         }
     
     def get_session_summary(self) -> dict:
-        """Get current session summary"""
+        """Get current session summary.
+        
+        :return: Dictionary containing session summary
+        """
         return self.session_manager.get_session_summary()
     
     def get_swing_statistics(self) -> dict:
-        """Get swing statistics for current session"""
+        """Get swing statistics for current session.
+        
+        :return: Dictionary containing swing statistics
+        """
         return self.session_manager.get_swing_statistics()
     
     def get_recent_swings(self, count: int = 5) -> list:
-        """Get recent swings for current session"""
+        """Get recent swings for current session.
+        
+        :param count: Number of recent swings to retrieve
+        :return: List of recent swing data
+        """
         swings = self.session_manager.get_swing_data(count=count)
         return [
             {
@@ -228,7 +262,7 @@ class GolfIMUBackend:
         ]
 
     def start_data_collection(self):
-        """Start data collection from Arduino"""
+        """Start data collection from Arduino with consistent 200+ Hz streaming."""
         if not self.session_manager.get_current_session():
             print("No active session. Please start a session first.")
             return
@@ -237,41 +271,133 @@ class GolfIMUBackend:
             print("Arduino not connected. Please connect first.")
             return
         
-        print("Starting data collection...")
+        print("Starting raw data buffering...")
         self.running = True
         
+        # Raw data buffer - just store the JSON strings
+        raw_data_buffer = []
+        
         try:
-            for imu_data in self.serial_manager.imu_data_stream():
-                if imu_data:
-                    # Store IMU data
-                    if self.redis_manager.store_imu_data(imu_data, self.session_manager.get_current_session()):
-                        # Check for impact detection
-                        self._detect_impact(imu_data)
-                else:
-                    # No data received, continue
-                    time.sleep(0.01)
+            data_count = 0
+            start_time = time.time()
+            
+            # Ultra-simple loop - just read and buffer
+            while self.running and self.serial_manager.is_connected:
+                try:
+                    # Read data if available
+                    if self.serial_manager.serial_connection.in_waiting > 0:
+                        line = self.serial_manager.serial_connection.readline().decode('utf-8').strip()
+                        
+                        # Only buffer JSON lines
+                        if line.startswith('{') and line.endswith('}'):
+                            # Just store the raw line - no parsing, no validation
+                            raw_data_buffer.append(line)
+                            data_count += 1
+                            
+                            # Log every 1000 points
+                            if data_count % 1000 == 0:
+                                current_time = time.time()
+                                elapsed = current_time - start_time
+                                rate = data_count / elapsed if elapsed > 0 else 0
+                                print(f"Buffered {data_count} data points ({rate:.1f} Hz)")
+                            
+                    else:
+                        # No data - tiny sleep
+                        time.sleep(0.0001)
+                        
+                except KeyboardInterrupt:
+                    print("\nData collection stopped by user")
+                    break
+                except Exception as e:
+                    print(f"Error: {e}")
+                    time.sleep(0.001)
                     
-        except KeyboardInterrupt:
-            print("\nData collection stopped by user")
         except Exception as e:
             print(f"Error during data collection: {e}")
         finally:
             self.running = False
+            
+            # Final stats
+            end_time = time.time()
+            total_duration = end_time - start_time
+            final_rate = data_count / total_duration if total_duration > 0 else 0
+            print(f"Data collection ended. Total: {data_count} points in {total_duration:.2f}s ({final_rate:.1f} Hz)")
+            
+            # Now process all the buffered data
+            print(f"Processing {len(raw_data_buffer)} buffered data points...")
+            self._process_buffered_data(raw_data_buffer)
+            
+    def _process_buffered_data(self, raw_data_buffer):
+        """Process all buffered data after collection ends."""
+        if not raw_data_buffer:
+            return
+            
+        processed_count = 0
+        impact_count = 0
+        
+        for line in raw_data_buffer:
+            try:
+                # Parse JSON
+                imu_dict = json.loads(line)
+                
+                # Create IMU data object
+                imu_data = IMUData(
+                    ax=imu_dict["ax"],
+                    ay=imu_dict["ay"],
+                    az=imu_dict["az"],
+                    gx=imu_dict["gx"],
+                    gy=imu_dict["gy"],
+                    gz=imu_dict["gz"],
+                    mx=imu_dict["mx"],
+                    my=imu_dict["my"],
+                    mz=imu_dict["mz"],
+                    qw=imu_dict.get("qw", 1.0),
+                    qx=imu_dict.get("qx", 0.0),
+                    qy=imu_dict.get("qy", 0.0),
+                    qz=imu_dict.get("qz", 0.0),
+                    timestamp=datetime.now()  # Use current time since we don't have original timestamps
+                )
+                
+                # Store data
+                self.redis_manager.store_imu_data(imu_data, self.session_manager.get_current_session())
+                
+                # Check for impact
+                self._detect_impact(imu_data)
+                impact_count += 1
+                
+                processed_count += 1
+                
+            except (ValueError, KeyError, json.JSONDecodeError):
+                continue
+        
+        print(f"Processed {processed_count} data points with {impact_count} impact checks")
+        
+        # Save to disk
+        if self.session_manager.get_current_session():
+            self.redis_manager.save_session_data(self.session_manager.get_current_session())
+            print("Session data saved to disk")
+
+
 
     def _detect_impact(self, imu_data: IMUData):
-        """Detect impact based on acceleration threshold"""
+        """Detect impact based on acceleration threshold.
+        
+        :param imu_data: IMU data to check for impact
+        """
         current_session = self.session_manager.get_current_session()
         if not current_session:
             return
         
-        # Calculate acceleration magnitude
-        accel_magnitude = (imu_data.ax**2 + imu_data.ay**2 + imu_data.az**2)**0.5
+        # Fast acceleration magnitude calculation (avoid sqrt when possible)
+        accel_squared = imu_data.ax**2 + imu_data.ay**2 + imu_data.az**2
+        threshold_squared = (current_session.impact_threshold * 9.81)**2
         
-        # Convert to g-force (divide by 9.81 m/s²)
-        g_force = accel_magnitude / 9.81
-        
-        # Check if impact threshold is exceeded
-        if g_force >= current_session.impact_threshold:
+        # Check if impact threshold is exceeded (using squared values to avoid sqrt)
+        if accel_squared >= threshold_squared:
+            # Only calculate g_force when impact is detected
+            accel_magnitude = accel_squared**0.5
+            g_force = accel_magnitude / 9.81
+            
             # Log impact event
             self.session_manager.log_swing_event("impact", {
                 "g_force": g_force,
@@ -296,6 +422,7 @@ def main():
     print("  start_monitoring")
     print("  wait_swing")
     print("  continuous_monitoring")
+    print("  start_data_collection")
     print("  status")
     print("  summary")
     print("  statistics")
@@ -346,6 +473,11 @@ def main():
             
             elif cmd == "continuous_monitoring":
                 backend.start_continuous_monitoring()
+            
+            elif cmd == "start_data_collection":
+                backend.start_data_collection()
+            
+
             
             elif cmd == "status":
                 status = backend.get_status()

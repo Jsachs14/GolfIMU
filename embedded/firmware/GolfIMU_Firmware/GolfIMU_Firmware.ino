@@ -1,100 +1,203 @@
 // GolfIMU_Firmware.ino
 // Teensy 4.0 + SparkFun BNO08x (BNO080/BNO085/BNO086) High-Performance IMU
-// Maximum sample rate with delta time loop for optimal performance
+// Backend-compatible version for BNO08x library version 1.0.6
 
 #include <Wire.h>
 #include <SparkFun_BNO08x_Arduino_Library.h>
-#include "global_config.h"
 
 BNO08x myIMU;
 
-// Timing variables for delta time loop
-unsigned long lastPrintTime = 0;
-unsigned long sampleCount = 0;
-unsigned long startTime = 0;
+// Command handling
+String inputString = "";
+bool stringComplete = false;
+
+// Mode settings
+bool monitoringEnabled = false;
+bool impactDetectionEnabled = false;  // Toggle for impact detection
+bool testMode = true;                 // Test mode (no impact detection needed)
+
+// Swing detection (only used if impactDetectionEnabled = true)
+float impactThreshold = 30.0; // Default g-force threshold
+unsigned long lastImpactTime = 0;
+const unsigned long IMPACT_COOLDOWN_MS = 1000; // 1 second cooldown
+
+// Session configuration
+String sessionId = "";
+String userId = "";
+String clubId = "";
+float clubLength = 1.07;
+float clubMass = 0.205;
+
+// IMU data storage
+float currentAx = 0, currentAy = 0, currentAz = 0;
+float currentGx = 0, currentGy = 0, currentGz = 0;
+float currentMx = 0, currentMy = 0, currentMz = 0;
+float currentQw = 0, currentQx = 0, currentQy = 0, currentQz = 0;
 
 void setup() {
-  Serial.begin(SERIAL_BAUDRATE);
-  while (!Serial && millis() < SERIAL_WAIT_TIMEOUT_MS) delay(10);
-  Serial.println(FIRMWARE_NAME);
-  Serial.print("Version: "); Serial.println(FIRMWARE_VERSION);
-  Serial.print("Sample Rate: "); Serial.print(IMU_SAMPLE_RATE_HZ); Serial.println("Hz (Maximum)");
+  Serial.begin(115200);
+  while (!Serial && millis() < 5000) delay(10);
+  Serial.println("GolfIMU Backend-Compatible Firmware");
+  Serial.println("Version: 1.0.0");
+  Serial.print("Test Mode: "); Serial.println(testMode ? "ENABLED" : "DISABLED");
+  Serial.print("Impact Detection: "); Serial.println(impactDetectionEnabled ? "ENABLED" : "DISABLED");
 
   Wire.begin();
-  Wire.setClock(WIRE_CLOCK_SPEED);
+  Wire.setClock(400000);
   
   if (!myIMU.begin()) {
-    Serial.println(ERROR_IMU_NOT_DETECTED);
+    Serial.println("BNO08x not detected. Check wiring!");
     while (1) delay(1000);
   }
   Serial.println("BNO08x connected!");
 
-  // Enable all basic reports with maximum performance settings
-  // Accelerometer: 1000Hz, ±16g range (maximum for golf swing analysis)
-  myIMU.enableReport(BNO08x::SENSOR_REPORT_ACCELEROMETER, IMU_ACCEL_REPORT_RATE, IMU_ACCEL_RANGE_G);
+  // Enable all sensors
+  myIMU.enableAccelerometer(1000);  // 1000Hz
+  myIMU.enableGyro(1000);           // 1000Hz
+  myIMU.enableMagnetometer();
+  myIMU.enableRotationVector();
   
-  // Gyroscope: 1000Hz, ±2000 dps range (maximum for precise rotation detection)
-  myIMU.enableReport(BNO08x::SENSOR_REPORT_GYROSCOPE, IMU_GYRO_REPORT_RATE, IMU_GYRO_RANGE_DPS);
-  
-  // Magnetometer: Default settings (typically 20Hz, sufficient for orientation)
-  myIMU.enableReport(BNO08x::SENSOR_REPORT_MAGNETIC_FIELD);
-  
-  // Rotation Vector: Default settings (typically 100Hz, sufficient for quaternion)
-  myIMU.enableReport(BNO08x::SENSOR_REPORT_ROTATION_VECTOR);
-  
-  startTime = millis();
-  lastPrintTime = millis();
-  Serial.print("High-performance IMU sampling started at "); Serial.print(IMU_SAMPLE_RATE_HZ); Serial.println("Hz");
+  Serial.println("Sensors enabled. Ready for backend connection.");
+  Serial.println("Commands: CONFIG:, START_MONITORING, STOP_MONITORING, REQUEST_SWING");
+  Serial.println("Mode Commands: ENABLE_IMPACT, DISABLE_IMPACT, TEST_MODE, PRODUCTION_MODE");
 }
 
 void loop() {
-  if (myIMU.dataAvailable()) {
-    // Read all sensor data
-    float ax = myIMU.getAccelX();
-    float ay = myIMU.getAccelY();
-    float az = myIMU.getAccelZ();
-    float gx = myIMU.getGyroX();
-    float gy = myIMU.getGyroY();
-    float gz = myIMU.getGyroZ();
-    float mx = myIMU.getMagX();
-    float my = myIMU.getMagY();
-    float mz = myIMU.getMagZ();
-    float qw = myIMU.getQuatI();
-    float qx = myIMU.getQuatJ();
-    float qy = myIMU.getQuatK();
-    float qz = myIMU.getQuatReal();
-
-    // Delta time loop: only print at specified interval
-    unsigned long currentTime = millis();
-    if (currentTime - lastPrintTime >= PRINT_INTERVAL_MS) {
-      // Print as JSON for backend (optimized format)
-      Serial.print("{\"" JSON_TIME_FIELD "\":"); Serial.print(currentTime);
-      Serial.print(",\"ax\":"); Serial.print(ax, JSON_FLOAT_PRECISION);
-      Serial.print(",\"ay\":"); Serial.print(ay, JSON_FLOAT_PRECISION);
-      Serial.print(",\"az\":"); Serial.print(az, JSON_FLOAT_PRECISION);
-      Serial.print(",\"gx\":"); Serial.print(gx, JSON_FLOAT_PRECISION);
-      Serial.print(",\"gy\":"); Serial.print(gy, JSON_FLOAT_PRECISION);
-      Serial.print(",\"gz\":"); Serial.print(gz, JSON_FLOAT_PRECISION);
-      Serial.print(",\"mx\":"); Serial.print(mx, JSON_FLOAT_PRECISION);
-      Serial.print(",\"my\":"); Serial.print(my, JSON_FLOAT_PRECISION);
-      Serial.print(",\"mz\":"); Serial.print(mz, JSON_FLOAT_PRECISION);
-      Serial.print(",\"qw\":"); Serial.print(qw, JSON_QUAT_PRECISION);
-      Serial.print(",\"qx\":"); Serial.print(qx, JSON_QUAT_PRECISION);
-      Serial.print(",\"qy\":"); Serial.print(qy, JSON_QUAT_PRECISION);
-      Serial.print(",\"qz\":"); Serial.print(qz, JSON_QUAT_PRECISION);
+  // Handle incoming commands
+  if (stringComplete) {
+    handleCommand(inputString);
+    inputString = "";
+    stringComplete = false;
+  }
+  
+  // Service the BNO08x bus and check for new data
+  if (myIMU.serviceBus()) {
+    if (myIMU.getSensorEvent()) {
+      uint8_t sensorId = myIMU.getSensorEventID();
+      
+      // Update current sensor values
+      if (sensorId == SH2_ACCELEROMETER) {
+        currentAx = myIMU.getAccelX();
+        currentAy = myIMU.getAccelY();
+        currentAz = myIMU.getAccelZ();
+      }
+      else if (sensorId == SH2_GYROSCOPE_CALIBRATED) {
+        currentGx = myIMU.getGyroX();
+        currentGy = myIMU.getGyroY();
+        currentGz = myIMU.getGyroZ();
+      }
+      else if (sensorId == SH2_MAGNETIC_FIELD_UNCALIBRATED) {
+        currentMx = myIMU.getMagX();
+        currentMy = myIMU.getMagY();
+        currentMz = myIMU.getMagZ();
+      }
+      else if (sensorId == SH2_ROTATION_VECTOR) {
+        currentQw = myIMU.getQuatI();
+        currentQx = myIMU.getQuatJ();
+        currentQy = myIMU.getQuatK();
+        currentQz = myIMU.getQuatReal();
+      }
+      
+      // Output combined IMU data (backend expects this format)
+      Serial.print("{\"t\":"); Serial.print(millis());
+      Serial.print(",\"ax\":"); Serial.print(currentAx, 3);
+      Serial.print(",\"ay\":"); Serial.print(currentAy, 3);
+      Serial.print(",\"az\":"); Serial.print(currentAz, 3);
+      Serial.print(",\"gx\":"); Serial.print(currentGx, 3);
+      Serial.print(",\"gy\":"); Serial.print(currentGy, 3);
+      Serial.print(",\"gz\":"); Serial.print(currentGz, 3);
+      Serial.print(",\"mx\":"); Serial.print(currentMx, 3);
+      Serial.print(",\"my\":"); Serial.print(currentMy, 3);
+      Serial.print(",\"mz\":"); Serial.print(currentMz, 3);
+      Serial.print(",\"qw\":"); Serial.print(currentQw, 4);
+      Serial.print(",\"qx\":"); Serial.print(currentQx, 4);
+      Serial.print(",\"qy\":"); Serial.print(currentQy, 4);
+      Serial.print(",\"qz\":"); Serial.print(currentQz, 4);
       Serial.println("}");
       
-      lastPrintTime = currentTime;
-      sampleCount++;
-      
-      // Print status every N samples
-      if (sampleCount % SAMPLE_COUNT_REPORT == 0) {
-        unsigned long elapsed = currentTime - startTime;
-        float actualRate = (sampleCount * 1000.0) / elapsed;
-        Serial.print("Status: "); Serial.print(sampleCount); 
-        Serial.print(" samples, "); Serial.print(actualRate, 1); 
-        Serial.println(" Hz actual rate");
+      // Check for impact only if monitoring and impact detection are enabled
+      if (monitoringEnabled && impactDetectionEnabled) {
+        checkForImpact();
       }
     }
+  }
+}
+
+void serialEvent() {
+  while (Serial.available()) {
+    char inChar = (char)Serial.read();
+    inputString += inChar;
+    if (inChar == '\n') {
+      stringComplete = true;
+    }
+  }
+}
+
+void handleCommand(String command) {
+  command.trim();
+  
+  if (command.startsWith("CONFIG:")) {
+    // Parse session configuration
+    String configJson = command.substring(7); // Remove "CONFIG:" prefix
+    // TODO: Parse JSON config and update session variables
+    Serial.println("Config received: " + configJson);
+  }
+  else if (command == "START_MONITORING") {
+    monitoringEnabled = true;
+    Serial.println("Swing monitoring started");
+    if (testMode) {
+      Serial.println("Test mode: All swing data will be logged (no impact detection needed)");
+    }
+  }
+  else if (command == "STOP_MONITORING") {
+    monitoringEnabled = false;
+    Serial.println("Swing monitoring stopped");
+  }
+  else if (command == "REQUEST_SWING") {
+    // TODO: Send last swing data if available
+    Serial.println("Swing data requested");
+  }
+  else if (command == "ENABLE_IMPACT") {
+    impactDetectionEnabled = true;
+    testMode = false;
+    Serial.println("Impact detection ENABLED - Production mode");
+  }
+  else if (command == "DISABLE_IMPACT") {
+    impactDetectionEnabled = false;
+    testMode = true;
+    Serial.println("Impact detection DISABLED - Test mode");
+  }
+  else if (command == "TEST_MODE") {
+    testMode = true;
+    impactDetectionEnabled = false;
+    Serial.println("Test mode ENABLED - No impact detection needed");
+  }
+  else if (command == "PRODUCTION_MODE") {
+    testMode = false;
+    impactDetectionEnabled = true;
+    Serial.println("Production mode ENABLED - Impact detection active");
+  }
+  else if (command == "STATUS") {
+    Serial.print("Monitoring: "); Serial.println(monitoringEnabled ? "ON" : "OFF");
+    Serial.print("Test Mode: "); Serial.println(testMode ? "ON" : "OFF");
+    Serial.print("Impact Detection: "); Serial.println(impactDetectionEnabled ? "ON" : "OFF");
+  }
+  else {
+    Serial.println("Unknown command: " + command);
+    Serial.println("Available commands: CONFIG:, START_MONITORING, STOP_MONITORING, REQUEST_SWING");
+    Serial.println("Mode commands: ENABLE_IMPACT, DISABLE_IMPACT, TEST_MODE, PRODUCTION_MODE, STATUS");
+  }
+}
+
+void checkForImpact() {
+  // Calculate total acceleration magnitude
+  float accelMagnitude = sqrt(currentAx*currentAx + currentAy*currentAy + currentAz*currentAz);
+  
+  // Check if impact threshold is exceeded and cooldown has passed
+  if (accelMagnitude > impactThreshold && (millis() - lastImpactTime) > IMPACT_COOLDOWN_MS) {
+    lastImpactTime = millis();
+    
+    // TODO: Implement swing buffering and complete swing detection
+    Serial.print("IMPACT_DETECTED: "); Serial.print(accelMagnitude, 1); Serial.println("g");
   }
 }

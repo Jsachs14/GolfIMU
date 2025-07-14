@@ -21,7 +21,11 @@ class SerialManager:
         self.is_connected = False
     
     def find_arduino_port(self) -> Optional[str]:
-        """Find Arduino port automatically"""
+        """Find Arduino port automatically.
+        
+        Returns:
+            Port name if found, None otherwise
+        """
         ports = serial.tools.list_ports.comports()
         
         for port in ports:
@@ -34,7 +38,14 @@ class SerialManager:
         return None
     
     def connect(self, port: Optional[str] = None) -> bool:
-        """Connect to Arduino via serial"""
+        """Connect to Arduino via serial.
+        
+        Args:
+            port: Serial port to connect to (auto-detect if None)
+            
+        Returns:
+            True if connection successful, False otherwise
+        """
         try:
             if port is None:
                 port = self.find_arduino_port()
@@ -68,12 +79,17 @@ class SerialManager:
         print("Disconnected from Arduino")
     
     def wait_for_swing_data(self) -> Optional[SwingData]:
-        """Wait for complete swing data from Arduino"""
+        """Wait for complete swing data from Arduino.
+        
+        Returns:
+            SwingData object if received, None otherwise
+        """
         if not self.is_connected or not self.serial_connection:
+            print("Not connected to Arduino - cannot wait for swing data")
             return None
         
         try:
-            # Wait for swing data transmission
+            # Wait for swing data transmission with timeout
             # Arduino will send a complete swing after impact detection
             line = self.serial_connection.readline().decode('utf-8').strip()
             
@@ -125,7 +141,14 @@ class SerialManager:
             return None
     
     def send_session_config(self, session_config) -> bool:
-        """Send session configuration to Arduino"""
+        """Send session configuration to Arduino.
+        
+        Args:
+            session_config: Session configuration to send
+            
+        Returns:
+            True if sent successfully, False otherwise
+        """
         if not self.is_connected or not self.serial_connection:
             return False
         
@@ -148,7 +171,14 @@ class SerialManager:
             return False
     
     def send_command(self, command: str) -> bool:
-        """Send command to Arduino"""
+        """Send command to Arduino.
+        
+        Args:
+            command: Command string to send
+            
+        Returns:
+            True if sent successfully, False otherwise
+        """
         if not self.is_connected or not self.serial_connection:
             return False
         
@@ -160,35 +190,64 @@ class SerialManager:
             return False
     
     def get_connection_status(self) -> tuple[bool, Optional[str]]:
-        """Get connection status and port info"""
+        """Get connection status and port info.
+        
+        Returns:
+            Tuple of (connected, port_name)
+        """
         if self.is_connected and self.serial_connection:
             return True, self.serial_connection.port
         return False, None
     
     def start_swing_monitoring(self) -> bool:
-        """Start swing monitoring on Arduino"""
+        """Start swing monitoring on Arduino.
+        
+        Returns:
+            True if command sent successfully, False otherwise
+        """
         return self.send_command("START_MONITORING")
     
     def stop_swing_monitoring(self) -> bool:
-        """Stop swing monitoring on Arduino"""
+        """Stop swing monitoring on Arduino.
+        
+        Returns:
+            True if command sent successfully, False otherwise
+        """
         return self.send_command("STOP_MONITORING")
     
     def request_swing_data(self) -> bool:
-        """Request swing data from Arduino"""
+        """Request swing data from Arduino.
+        
+        Returns:
+            True if command sent successfully, False otherwise
+        """
         return self.send_command("REQUEST_SWING")
 
     def read_imu_data(self) -> Optional[IMUData]:
-        """Read single IMU data point from Arduino (expects JSON line)"""
+        """Read single IMU data point from Arduino (expects JSON line)
+        
+        Returns:
+            IMUData object if valid data received, None otherwise
+        """
         if not self.is_connected or not self.serial_connection:
             return None
         
         try:
+            # Use timeout to prevent blocking indefinitely
             line = self.serial_connection.readline().decode('utf-8').strip()
             if not line:
                 return None
             
-            # Parse IMU data (JSON format)
+            # Skip non-JSON lines (startup messages, command responses, etc.)
+            if not line.startswith('{') or not line.endswith('}'):
+                return None
+            
+            # Parse IMU data (JSON format) - optimized for speed
             imu_dict = json.loads(line)
+            
+            # Use current time directly - minimal overhead
+            timestamp = datetime.now()
+            
             return IMUData(
                 ax=imu_dict["ax"],
                 ay=imu_dict["ay"],
@@ -199,25 +258,54 @@ class SerialManager:
                 mx=imu_dict["mx"],
                 my=imu_dict["my"],
                 mz=imu_dict["mz"],
-                timestamp=datetime.fromtimestamp(imu_dict["t"] / 1000.0)  # ms to seconds
+                qw=imu_dict["qw"],
+                qx=imu_dict["qx"],
+                qy=imu_dict["qy"],
+                qz=imu_dict["qz"],
+                timestamp=timestamp
             )
         
         except (ValueError, KeyError, json.JSONDecodeError) as e:
-            print(f"Error parsing IMU data: {e}")
+            # Only print error for lines that look like JSON but failed to parse
+            if line.startswith('{') and line.endswith('}'):
+                print(f"Error parsing IMU data: {e}")
             return None
         except Exception as e:
             print(f"Error reading IMU data: {e}")
             return None
 
     def imu_data_stream(self):
-        """Generator that yields IMU data continuously"""
+        """Generator that yields IMU data continuously.
+        
+        Yields:
+            IMUData objects as they are received
+        """
         if not self.is_connected:
+            print("Not connected to Arduino - cannot start IMU data stream")
             return
         
+        print("Starting IMU data stream...")
+        data_count = 0
+        
         while self.is_connected:
-            imu_data = self.read_imu_data()
-            if imu_data:
-                yield imu_data
-            else:
-                # Small delay to prevent busy waiting
-                time.sleep(0.01) 
+            try:
+                imu_data = self.read_imu_data()
+                if imu_data:
+                    data_count += 1
+                    if data_count % 100 == 0:  # Log every 100 data points
+                        print(f"Received {data_count} IMU data points...")
+                    yield imu_data
+                else:
+                    # No data received, continue
+                    time.sleep(0.01)
+                    
+            except KeyboardInterrupt:
+                print("IMU data stream interrupted by user")
+                break
+            except Exception as e:
+                print(f"Error in IMU data stream: {e}")
+                time.sleep(0.1)  # Wait a bit before retrying
+        
+        print(f"IMU data stream ended. Total data points: {data_count}")
+
+ 
