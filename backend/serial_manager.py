@@ -274,38 +274,6 @@ class SerialManager:
             print(f"Error reading IMU data: {e}")
             return None
 
-    def imu_data_stream(self):
-        """Generator that yields IMU data continuously.
-        
-        Yields:
-            IMUData objects as they are received
-        """
-        if not self.is_connected:
-            print("Not connected to Arduino - cannot start IMU data stream")
-            return
-        
-        print("Starting IMU data stream...")
-        data_count = 0
-        
-        while self.is_connected:
-            try:
-                imu_data = self.read_imu_data()
-                if imu_data:
-                    data_count += 1
-                    if data_count % 100 == 0:  # Log every 100 data points
-                        print(f"Received {data_count} IMU data points...")
-                    yield imu_data
-                else:
-                    # No data received, continue
-                    time.sleep(0.01)
-                    
-            except KeyboardInterrupt:
-                print("IMU data stream interrupted by user")
-                break
-            except Exception as e:
-                print(f"Error in IMU data stream: {e}")
-                time.sleep(0.1)  # Wait a bit before retrying
-        
-        print(f"IMU data stream ended. Total data points: {data_count}")
+
 
  

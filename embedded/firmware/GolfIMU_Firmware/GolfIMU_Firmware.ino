@@ -98,27 +98,19 @@ void loop() {
         currentQz = myIMU.getQuatReal();
       }
       
-      // Output combined IMU data (backend expects this format)
-      Serial.print("{\"t\":"); Serial.print(millis());
-      Serial.print(",\"ax\":"); Serial.print(currentAx, 3);
-      Serial.print(",\"ay\":"); Serial.print(currentAy, 3);
-      Serial.print(",\"az\":"); Serial.print(currentAz, 3);
-      Serial.print(",\"gx\":"); Serial.print(currentGx, 3);
-      Serial.print(",\"gy\":"); Serial.print(currentGy, 3);
-      Serial.print(",\"gz\":"); Serial.print(currentGz, 3);
-      Serial.print(",\"mx\":"); Serial.print(currentMx, 3);
-      Serial.print(",\"my\":"); Serial.print(currentMy, 3);
-      Serial.print(",\"mz\":"); Serial.print(currentMz, 3);
-      Serial.print(",\"qw\":"); Serial.print(currentQw, 4);
-      Serial.print(",\"qx\":"); Serial.print(currentQx, 4);
-      Serial.print(",\"qy\":"); Serial.print(currentQy, 4);
-      Serial.print(",\"qz\":"); Serial.print(currentQz, 4);
-      Serial.println("}");
+      // Output combined IMU data (backend expects this format) - OPTIMIZED
+      char jsonBuffer[256];
+      snprintf(jsonBuffer, sizeof(jsonBuffer), 
+        "{\"t\":%lu,\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f,\"gx\":%.3f,\"gy\":%.3f,\"gz\":%.3f,\"mx\":%.3f,\"my\":%.3f,\"mz\":%.3f,\"qw\":%.4f,\"qx\":%.4f,\"qy\":%.4f,\"qz\":%.4f}",
+        millis(), currentAx, currentAy, currentAz, currentGx, currentGy, currentGz, 
+        currentMx, currentMy, currentMz, currentQw, currentQx, currentQy, currentQz);
+      Serial.println(jsonBuffer);
       
       // Check for impact only if monitoring and impact detection are enabled
-      if (monitoringEnabled && impactDetectionEnabled) {
-        checkForImpact();
-      }
+      // DISABLED for maximum speed data collection
+      // if (monitoringEnabled && impactDetectionEnabled) {
+      //   checkForImpact();
+      // }
     }
   }
 }

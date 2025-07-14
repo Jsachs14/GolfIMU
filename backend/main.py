@@ -7,6 +7,7 @@ import sys
 import json
 from datetime import datetime
 from typing import Optional
+import os
 
 from .config import settings
 from .redis_manager import RedisManager
@@ -261,121 +262,7 @@ class GolfIMUBackend:
             for swing in swings
         ]
 
-    def start_data_collection(self):
-        """Start data collection from Arduino with consistent 200+ Hz streaming."""
-        if not self.session_manager.get_current_session():
-            print("No active session. Please start a session first.")
-            return
-        
-        if not self.serial_manager.is_connected:
-            print("Arduino not connected. Please connect first.")
-            return
-        
-        print("Starting raw data buffering...")
-        self.running = True
-        
-        # Raw data buffer - just store the JSON strings
-        raw_data_buffer = []
-        
-        try:
-            data_count = 0
-            start_time = time.time()
-            
-            # Ultra-simple loop - just read and buffer
-            while self.running and self.serial_manager.is_connected:
-                try:
-                    # Read data if available
-                    if self.serial_manager.serial_connection.in_waiting > 0:
-                        line = self.serial_manager.serial_connection.readline().decode('utf-8').strip()
-                        
-                        # Only buffer JSON lines
-                        if line.startswith('{') and line.endswith('}'):
-                            # Just store the raw line - no parsing, no validation
-                            raw_data_buffer.append(line)
-                            data_count += 1
-                            
-                            # Log every 1000 points
-                            if data_count % 1000 == 0:
-                                current_time = time.time()
-                                elapsed = current_time - start_time
-                                rate = data_count / elapsed if elapsed > 0 else 0
-                                print(f"Buffered {data_count} data points ({rate:.1f} Hz)")
-                            
-                    else:
-                        # No data - tiny sleep
-                        time.sleep(0.0001)
-                        
-                except KeyboardInterrupt:
-                    print("\nData collection stopped by user")
-                    break
-                except Exception as e:
-                    print(f"Error: {e}")
-                    time.sleep(0.001)
-                    
-        except Exception as e:
-            print(f"Error during data collection: {e}")
-        finally:
-            self.running = False
-            
-            # Final stats
-            end_time = time.time()
-            total_duration = end_time - start_time
-            final_rate = data_count / total_duration if total_duration > 0 else 0
-            print(f"Data collection ended. Total: {data_count} points in {total_duration:.2f}s ({final_rate:.1f} Hz)")
-            
-            # Now process all the buffered data
-            print(f"Processing {len(raw_data_buffer)} buffered data points...")
-            self._process_buffered_data(raw_data_buffer)
-            
-    def _process_buffered_data(self, raw_data_buffer):
-        """Process all buffered data after collection ends."""
-        if not raw_data_buffer:
-            return
-            
-        processed_count = 0
-        impact_count = 0
-        
-        for line in raw_data_buffer:
-            try:
-                # Parse JSON
-                imu_dict = json.loads(line)
-                
-                # Create IMU data object
-                imu_data = IMUData(
-                    ax=imu_dict["ax"],
-                    ay=imu_dict["ay"],
-                    az=imu_dict["az"],
-                    gx=imu_dict["gx"],
-                    gy=imu_dict["gy"],
-                    gz=imu_dict["gz"],
-                    mx=imu_dict["mx"],
-                    my=imu_dict["my"],
-                    mz=imu_dict["mz"],
-                    qw=imu_dict.get("qw", 1.0),
-                    qx=imu_dict.get("qx", 0.0),
-                    qy=imu_dict.get("qy", 0.0),
-                    qz=imu_dict.get("qz", 0.0),
-                    timestamp=datetime.now()  # Use current time since we don't have original timestamps
-                )
-                
-                # Store data
-                self.redis_manager.store_imu_data(imu_data, self.session_manager.get_current_session())
-                
-                # Check for impact
-                self._detect_impact(imu_data)
-                impact_count += 1
-                
-                processed_count += 1
-                
-            except (ValueError, KeyError, json.JSONDecodeError):
-                continue
-        
-        print(f"Processed {processed_count} data points with {impact_count} impact checks")
-        
-        # Save to disk
-        if self.session_manager.get_current_session():
-            self.redis_manager.save_session_data(self.session_manager.get_current_session())
-            print("Session data saved to disk")
+
 
 
 
@@ -406,6 +293,148 @@ class GolfIMUBackend:
             })
             print(f"Impact detected! G-force: {g_force:.1f}g")
 
+    def start_data_collection_c(self):
+        """Start data collection using C program for maximum speed."""
+        if not self.session_manager.get_current_session():
+            print("No active session. Please start a session first.")
+            return
+        
+        if not self.serial_manager.is_connected:
+            print("Arduino not connected. Please connect first.")
+            return
+        
+        print("Starting C-based high-speed data collection...")
+        self.running = True
+        
+        # Get the Arduino port
+        arduino_connected, arduino_port = self.serial_manager.get_connection_status()
+        if not arduino_port:
+            print("Could not determine Arduino port")
+            return
+        
+        # Path to the C program
+        c_program_path = os.path.join(os.path.dirname(__file__), '..', 'scripts', 'fast_serial_reader')
+        
+        if not os.path.exists(c_program_path):
+            print(f"C program not found at {c_program_path}")
+            print("Please compile it first: cd scripts && gcc -o fast_serial_reader fast_serial_reader.c")
+            return
+        
+        # Start the C program
+        import subprocess
+        cmd = [c_program_path, arduino_port, "temp_imu_data.txt"]
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        start_time = time.time()
+        data_count = 0
+        
+        try:
+            while self.running:
+                time.sleep(1)
+                
+                # Check if process is still running
+                if process.poll() is not None:
+                    print("C program stopped unexpectedly")
+                    break
+                
+                # Count current data points
+                try:
+                    with open("temp_imu_data.txt", "r") as f:
+                        lines = f.readlines()
+                        current_count = sum(1 for line in lines if line.strip().startswith('{'))
+                    
+                    if current_count > data_count:
+                        elapsed = time.time() - start_time
+                        rate = current_count / elapsed if elapsed > 0 else 0
+                        print(f"Collected {current_count} data points ({rate:.1f} Hz)")
+                        data_count = current_count
+                        
+                except FileNotFoundError:
+                    pass
+                    
+        except KeyboardInterrupt:
+            print("\nStopping data collection...")
+        
+        # Stop the C program
+        process.terminate()
+        process.wait()
+        
+        # Final count and processing
+        try:
+            with open("temp_imu_data.txt", "r") as f:
+                lines = f.readlines()
+                final_count = sum(1 for line in lines if line.strip().startswith('{'))
+        except FileNotFoundError:
+            final_count = 0
+        
+        total_duration = time.time() - start_time
+        final_rate = final_count / total_duration if total_duration > 0 else 0
+        
+        print(f"\nData collection completed!")
+        print(f"Total: {final_count} data points in {total_duration:.1f}s ({final_rate:.1f} Hz)")
+        
+        # Process the collected data
+        if final_count > 0:
+            print("Processing collected data...")
+            self._process_c_collected_data("temp_imu_data.txt")
+        
+        self.running = False
+        
+    def _process_c_collected_data(self, filename):
+        """Process data collected by the C program."""
+        try:
+            with open(filename, "r") as f:
+                lines = f.readlines()
+            
+            # Filter JSON lines
+            json_lines = [line.strip() for line in lines if line.strip().startswith('{')]
+            
+            print(f"Processing {len(json_lines)} JSON data points...")
+            
+            processed_count = 0
+            for line in json_lines:
+                try:
+                    # Parse JSON
+                    imu_dict = json.loads(line)
+                    
+                    # Create IMU data object
+                    imu_data = IMUData(
+                        ax=imu_dict["ax"],
+                        ay=imu_dict["ay"],
+                        az=imu_dict["az"],
+                        gx=imu_dict["gx"],
+                        gy=imu_dict["gy"],
+                        gz=imu_dict["gz"],
+                        mx=imu_dict["mx"],
+                        my=imu_dict["my"],
+                        mz=imu_dict["mz"],
+                        qw=imu_dict.get("qw", 1.0),
+                        qx=imu_dict.get("qx", 0.0),
+                        qy=imu_dict.get("qy", 0.0),
+                        qz=imu_dict.get("qz", 0.0),
+                        timestamp=datetime.now()
+                    )
+                    
+                    # Store in Redis
+                    self.redis_manager.store_imu_data(imu_data, self.session_manager.get_current_session())
+                    processed_count += 1
+                    
+                except (ValueError, KeyError, json.JSONDecodeError):
+                    continue
+            
+            print(f"Successfully processed {processed_count} data points")
+            
+            # Save to disk
+            if self.session_manager.get_current_session():
+                self.redis_manager.save_session_data(self.session_manager.get_current_session())
+                print("Session data saved to disk")
+            
+            # Clean up temp file
+            os.remove(filename)
+            
+        except FileNotFoundError:
+            print("No data file found to process")
+
 
 def main():
     """Main entry point"""
@@ -422,7 +451,7 @@ def main():
     print("  start_monitoring")
     print("  wait_swing")
     print("  continuous_monitoring")
-    print("  start_data_collection")
+    print("  start_data_collection_c") # Added new command
     print("  status")
     print("  summary")
     print("  statistics")
@@ -474,8 +503,8 @@ def main():
             elif cmd == "continuous_monitoring":
                 backend.start_continuous_monitoring()
             
-            elif cmd == "start_data_collection":
-                backend.start_data_collection()
+            elif cmd == "start_data_collection_c": # Added new command
+                backend.start_data_collection_c()
             
 
             

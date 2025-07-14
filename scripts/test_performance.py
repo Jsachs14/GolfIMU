@@ -26,9 +26,9 @@ except ImportError as e:
     from backend.main import GolfIMUBackend
 
 
-def test_data_collection():
-    """Test high-performance data collection"""
-    print("=== Testing High-Performance Data Collection ===")
+def test_data_collection_c():
+    """Test C-based high-performance data collection"""
+    print("=== Testing C-Based High-Performance Data Collection ===")
     
     backend = GolfIMUBackend()
     
@@ -40,11 +40,11 @@ def test_data_collection():
         print("Failed to connect to Arduino")
         return
     
-    print("Starting high-performance data collection...")
+    print("Starting C-based high-performance data collection...")
     start_time = time.time()
     
     try:
-        backend.start_data_collection()
+        backend.start_data_collection_c()
     except KeyboardInterrupt:
         print("\nData collection stopped by user")
     
@@ -64,16 +64,16 @@ def main():
     if len(sys.argv) > 1:
         test_type = sys.argv[1].lower()
         
-        if test_type == "data_collection":
-            test_data_collection()
+        if test_type == "data_collection_c":
+            test_data_collection_c()
         else:
-            print("Unknown test type. Use: data_collection")
+            print("Unknown test type. Use: data_collection_c")
     else:
-        print("Running high-performance data collection test...")
+        print("Running C-based high-performance data collection test...")
         print("Press Ctrl+C to stop the test")
         
         try:
-            test_data_collection()
+            test_data_collection_c()
         except KeyboardInterrupt:
             print("Test completed")
 
