@@ -333,8 +333,12 @@ class GolfIMUBackend:
                 time.sleep(1)
                 
                 # Check if process is still running
-                if process.poll() is not None:
-                    print("C program stopped unexpectedly")
+                try:
+                    if process.poll() is not None:
+                        print("C program stopped unexpectedly")
+                        break
+                except Exception as e:
+                    print(f"Error checking process status: {e}")
                     break
                 
                 # Count current data points
@@ -354,6 +358,8 @@ class GolfIMUBackend:
                     
         except KeyboardInterrupt:
             print("\nStopping data collection...")
+        except Exception as e:
+            print(f"Error during data collection: {e}")
         
         # Stop the C program
         process.terminate()

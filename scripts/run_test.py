@@ -217,7 +217,7 @@ def main():
         
         # Send start command
         try:
-            backend_process.stdin.write("start_data_collection\n")
+            backend_process.stdin.write("start_data_collection_c\n")
             backend_process.stdin.flush()
         except Exception as e:
             print(f"❌ Failed to send start command: {e}")
@@ -255,7 +255,7 @@ def main():
         print("  connect_arduino")
         print("  start_session test_user driver 1.07 0.205")
         print("  send_config")
-        print("  start_data_collection")
+        print("  start_data_collection_c")
         
         print("\n💡 Next steps:")
         print("  1. Connect Teensy 4.0 + BNO08x IMU")

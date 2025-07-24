@@ -73,6 +73,7 @@ class TestRedisManager:
                 "ax": 1.0, "ay": 2.0, "az": 3.0,
                 "gx": 4.0, "gy": 5.0, "gz": 6.0,
                 "mx": 7.0, "my": 8.0, "mz": 9.0,
+                "qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0,
                 "timestamp": "2023-01-01T12:00:00"
             })
         ]
@@ -104,9 +105,9 @@ class TestRedisManager:
         
         assert result == []
     
-    def test_store_swing_event_success(self, redis_manager_with_mock, sample_swing_event):
+    def test_store_swing_event_success(self, redis_manager_with_mock, sample_swing_event, sample_session_config):
         """Test successful swing event storage"""
-        result = redis_manager_with_mock.store_swing_event(sample_swing_event)
+        result = redis_manager_with_mock.store_swing_event(sample_swing_event, sample_session_config)
         
         assert result is True
         redis_manager_with_mock.redis_client.lpush.assert_called_once()
@@ -118,11 +119,11 @@ class TestRedisManager:
         assert event_dict["event_type"] == sample_swing_event.event_type
         assert event_dict["data"] == sample_swing_event.data
     
-    def test_store_swing_event_failure(self, redis_manager_with_mock, sample_swing_event):
+    def test_store_swing_event_failure(self, redis_manager_with_mock, sample_swing_event, sample_session_config):
         """Test swing event storage failure"""
         redis_manager_with_mock.redis_client.lpush.side_effect = Exception("Redis error")
         
-        result = redis_manager_with_mock.store_swing_event(sample_swing_event)
+        result = redis_manager_with_mock.store_swing_event(sample_swing_event, sample_session_config)
         
         assert result is False
     
@@ -192,11 +193,13 @@ class TestRedisManager:
         """Test successful session data clearing"""
         # Mock get_session_config to return a valid config
         redis_manager_with_mock.get_session_config = Mock(return_value=sample_session_config)
+        # Mock keys to return some keys to delete
+        redis_manager_with_mock.redis_client.keys.return_value = ["session:test:swings", "session:test:events"]
         
         result = redis_manager_with_mock.clear_session_data(sample_session_config.session_id)
         
         assert result is True
-        # Should call delete 3 times: for IMU data, events, and config
+        # Should call delete 3 times: for IMU data/events, session config, and IMU counter
         assert redis_manager_with_mock.redis_client.delete.call_count == 3
     
     def test_clear_session_data_session_not_found(self, redis_manager_with_mock):
@@ -231,7 +234,7 @@ class TestRedisManager:
     def test_store_swing_data_success(self, redis_manager_with_mock, sample_session_config):
         """Test successful swing data storage"""
         # Create sample swing data
-        sample_imu_data = IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0)
+        sample_imu_data = IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0, qw=1.0, qx=0.0, qy=0.0, qz=0.0)
         swing_data = SwingData(
             session_id=sample_session_config.session_id,
             imu_data_points=[sample_imu_data],
@@ -262,7 +265,7 @@ class TestRedisManager:
         """Test swing data storage failure"""
         redis_manager_with_mock.redis_client.lpush.side_effect = Exception("Redis error")
         
-        sample_imu_data = IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0)
+        sample_imu_data = IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0, qw=1.0, qx=0.0, qy=0.0, qz=0.0)
         swing_data = SwingData(
             session_id=sample_session_config.session_id,
             imu_data_points=[sample_imu_data],
@@ -288,6 +291,7 @@ class TestRedisManager:
                     "ax": 1.0, "ay": 2.0, "az": 3.0,
                     "gx": 4.0, "gy": 5.0, "gz": 6.0,
                     "mx": 7.0, "my": 8.0, "mz": 9.0,
+                    "qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0,
                     "timestamp": "2023-01-01T12:00:00"
                 }
             ],
@@ -370,6 +374,7 @@ class TestRedisManager:
                 "ax": 1.0, "ay": 2.0, "az": 3.0,
                 "gx": 4.0, "gy": 5.0, "gz": 6.0,
                 "mx": 7.0, "my": 8.0, "mz": 9.0,
+                "qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0,
                 "timestamp": "2023-01-01T12:00:00"
             }),
             "invalid-json",  # This should be skipped
@@ -377,6 +382,7 @@ class TestRedisManager:
                 "ax": 2.0, "ay": 3.0, "az": 4.0,
                 "gx": 5.0, "gy": 6.0, "gz": 7.0,
                 "mx": 8.0, "my": 9.0, "mz": 10.0,
+                "qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0,
                 "timestamp": "2023-01-01T12:01:00"
             })
         ]
@@ -385,7 +391,6 @@ class TestRedisManager:
         result = redis_manager_with_mock.get_imu_buffer(sample_session_config)
         
         # Should return 2 valid data points, skipping the invalid one
-        # Note: The implementation reverses the list, so the first item in result is the last in mock_data
         assert len(result) == 2
-        assert result[0].ax == 2.0  # This is the last item in mock_data (after reversal)
-        assert result[1].ax == 1.0  # This is the first item in mock_data (after reversal) 
+        assert result[0].ax == 1.0  # First valid item in mock_data
+        assert result[1].ax == 2.0  # Second valid item in mock_data 

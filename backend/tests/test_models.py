@@ -14,7 +14,8 @@ class TestIMUData:
         imu_data = IMUData(
             ax=1.0, ay=2.0, az=3.0,
             gx=4.0, gy=5.0, gz=6.0,
-            mx=7.0, my=8.0, mz=9.0
+            mx=7.0, my=8.0, mz=9.0,
+            qw=1.0, qx=0.0, qy=0.0, qz=0.0
         )
         
         assert imu_data.ax == 1.0
@@ -26,6 +27,10 @@ class TestIMUData:
         assert imu_data.mx == 7.0
         assert imu_data.my == 8.0
         assert imu_data.mz == 9.0
+        assert imu_data.qw == 1.0
+        assert imu_data.qx == 0.0
+        assert imu_data.qy == 0.0
+        assert imu_data.qz == 0.0
         assert isinstance(imu_data.timestamp, datetime)
     
     def test_imu_data_with_custom_timestamp(self):
@@ -35,6 +40,7 @@ class TestIMUData:
             ax=1.0, ay=2.0, az=3.0,
             gx=4.0, gy=5.0, gz=6.0,
             mx=7.0, my=8.0, mz=9.0,
+            qw=1.0, qx=0.0, qy=0.0, qz=0.0,
             timestamp=custom_time
         )
         
@@ -46,7 +52,8 @@ class TestIMUData:
         imu_data = IMUData(
             ax=1.5, ay=-2.3, az=0.0,
             gx=10.5, gy=-5.2, gz=3.14,
-            mx=25.0, my=-15.5, mz=8.9
+            mx=25.0, my=-15.5, mz=8.9,
+            qw=1.0, qx=0.0, qy=0.0, qz=0.0
         )
         
         assert isinstance(imu_data.ax, float)

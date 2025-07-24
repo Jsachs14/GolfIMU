@@ -69,7 +69,7 @@ class RedisManager:
             print(f"Error writing IMU data to disk: {e}")
     
     def store_imu_data(self, imu_data: IMUData, session_config: SessionConfig) -> bool:
-        """Store IMU data with simple 200 Hz approach for consistent performance
+        """Store IMU data in Redis
         
         Args:
             imu_data: IMU data to store
@@ -79,33 +79,28 @@ class RedisManager:
             True if stored successfully, False otherwise
         """
         try:
-            # Initialize if new session
-            if self._session_id != session_config.session_id:
-                self._session_id = session_config.session_id
-                self._imu_buffer = []
-                
-                # Create Redis counter for this session
-                counter_key = f"imu_counter:{session_config.session_id}"
-                self.redis_client.set(counter_key, 0)
+            # Create Redis key
+            redis_key = RedisKey(
+                session_id=session_config.session_id,
+                user_id=session_config.user_id,
+                club_id=session_config.club_id,
+                data_type="imu_buffer"
+            )
             
-            # Ultra-simple dict storage - minimal overhead
-            imu_dict = {
-                "t": imu_data.timestamp.isoformat() if hasattr(imu_data.timestamp, 'isoformat') else str(imu_data.timestamp),
+            # Convert to JSON
+            imu_json = json.dumps({
                 "ax": imu_data.ax, "ay": imu_data.ay, "az": imu_data.az,
                 "gx": imu_data.gx, "gy": imu_data.gy, "gz": imu_data.gz,
                 "mx": imu_data.mx, "my": imu_data.my, "mz": imu_data.mz,
-                "qw": imu_data.qw, "qx": imu_data.qx, "qy": imu_data.qy, "qz": imu_data.qz
-            }
+                "qw": imu_data.qw, "qx": imu_data.qx, "qy": imu_data.qy, "qz": imu_data.qz,
+                "timestamp": imu_data.timestamp.isoformat()
+            })
             
-            # Just append to list - simple and fast
-            self._imu_buffer.append(imu_dict)
+            # Store in Redis
+            self.redis_client.lpush(redis_key.to_key(), imu_json)
             
-            # Update Redis counter every 1000 samples (infrequent)
-            self._imu_operation_count += 1
-            if self._imu_operation_count >= 1000:
-                counter_key = f"imu_counter:{session_config.session_id}"
-                self.redis_client.incrby(counter_key, 1000)
-                self._imu_operation_count = 0
+            # Keep only last 1000 samples
+            self.redis_client.ltrim(redis_key.to_key(), 0, 999)
             
             return True
             
@@ -114,43 +109,37 @@ class RedisManager:
             return False
     
     def get_imu_buffer(self, session_config: SessionConfig, count: Optional[int] = None) -> List[IMUData]:
-        """Get IMU data from disk storage"""
+        """Get IMU data from Redis"""
         try:
-            file_path = self._get_imu_file_path(session_config.session_id)
-            if not os.path.exists(file_path):
-                return []
+            # Create Redis key
+            redis_key = RedisKey(
+                session_id=session_config.session_id,
+                user_id=session_config.user_id,
+                club_id=session_config.club_id,
+                data_type="imu_buffer"
+            )
+            
+            # Get data from Redis
+            if count:
+                data_list = self.redis_client.lrange(redis_key.to_key(), 0, count - 1)
+            else:
+                data_list = self.redis_client.lrange(redis_key.to_key(), 0, -1)
             
             imu_data_list = []
-            with open(file_path, 'r') as f:
-                for line in f:
-                    if count and len(imu_data_list) >= count:
-                        break
-                    
-                    try:
-                        data = json.loads(line.strip())
-                        # Parse timestamp back to datetime
-                        timestamp_str = data['t']
-                        if isinstance(timestamp_str, str):
-                            # Try to parse ISO format first
-                            try:
-                                timestamp = datetime.fromisoformat(timestamp_str)
-                            except ValueError:
-                                # Fallback to parsing as float
-                                timestamp = datetime.fromtimestamp(float(timestamp_str))
-                        else:
-                            timestamp = timestamp_str
-                            
-                        imu_data = IMUData(
-                            timestamp=timestamp,
-                            ax=data['ax'], ay=data['ay'], az=data['az'],
-                            gx=data['gx'], gy=data['gy'], gz=data['gz'],
-                            mx=data['mx'], my=data['my'], mz=data['mz'],
-                            qw=data['qw'], qx=data['qx'], qy=data['qy'], qz=data['qz']
-                        )
-                        imu_data_list.append(imu_data)
-                    except Exception as e:
-                        print(f"Error parsing IMU data line: {e}")
-                        continue
+            for data_json in data_list:
+                try:
+                    data = json.loads(data_json)
+                    imu_data = IMUData(
+                        ax=data['ax'], ay=data['ay'], az=data['az'],
+                        gx=data['gx'], gy=data['gy'], gz=data['gz'],
+                        mx=data['mx'], my=data['my'], mz=data['mz'],
+                        qw=data['qw'], qx=data['qx'], qy=data['qy'], qz=data['qz'],
+                        timestamp=datetime.fromisoformat(data['timestamp'])
+                    )
+                    imu_data_list.append(imu_data)
+                except Exception as e:
+                    print(f"Error parsing IMU data: {e}")
+                    continue
             
             return imu_data_list
             
@@ -172,21 +161,27 @@ class RedisManager:
             # Convert to JSON
             swing_json = json.dumps({
                 "swing_id": swing_data.swing_id,
-                "timestamp": swing_data.timestamp.isoformat(),
-                "duration": swing_data.duration,
-                "peak_velocity": swing_data.peak_velocity,
-                "impact_velocity": swing_data.impact_velocity,
-                "backswing_time": swing_data.backswing_time,
-                "downswing_time": swing_data.downswing_time,
-                "follow_through_time": swing_data.follow_through_time,
-                "metrics": swing_data.metrics.dict() if swing_data.metrics else None
+                "session_id": swing_data.session_id,
+                "imu_data_points": [{
+                    "ax": imu.ax, "ay": imu.ay, "az": imu.az,
+                    "gx": imu.gx, "gy": imu.gy, "gz": imu.gz,
+                    "mx": imu.mx, "my": imu.my, "mz": imu.mz,
+                    "qw": imu.qw, "qx": imu.qx, "qy": imu.qy, "qz": imu.qz,
+                    "timestamp": imu.timestamp.isoformat()
+                } for imu in swing_data.imu_data_points],
+                "swing_start_time": swing_data.swing_start_time.isoformat(),
+                "swing_end_time": swing_data.swing_end_time.isoformat(),
+                "swing_duration": swing_data.swing_duration,
+                "impact_g_force": swing_data.impact_g_force,
+                "swing_type": swing_data.swing_type
             })
             
             # Store in Redis
-            self.redis_client.lpush(redis_key.to_string(), swing_json)
+            key = f"session:{session_config.session_id}:swings"
+            self.redis_client.lpush(key, swing_json)
             
             # Keep only last 100 swings
-            self.redis_client.ltrim(redis_key.to_string(), 0, 99)
+            self.redis_client.ltrim(key, 0, 99)
             
             return True
             
@@ -205,15 +200,16 @@ class RedisManager:
             )
             
             event_json = json.dumps({
+                "swing_id": event.swing_id,
+                "session_id": event.session_id,
                 "event_type": event.event_type,
                 "timestamp": event.timestamp.isoformat(),
-                "velocity": event.velocity,
-                "acceleration": event.acceleration,
-                "g_force": event.g_force
+                "data": event.data
             })
             
-            self.redis_client.lpush(redis_key.to_string(), event_json)
-            self.redis_client.ltrim(redis_key.to_string(), 0, 999)
+            key = f"session:{session_config.session_id}:events"
+            self.redis_client.lpush(key, event_json)
+            self.redis_client.ltrim(key, 0, 999)
             
             return True
             
@@ -232,21 +228,26 @@ class RedisManager:
             )
             
             swing_data_list = []
-            swing_jsons = self.redis_client.lrange(redis_key.to_string(), 0, count - 1)
+            swing_jsons = self.redis_client.lrange(redis_key.to_key(), 0, count - 1)
             
             for swing_json in swing_jsons:
                 try:
                     data = json.loads(swing_json)
+                    # Parse IMU data points
+                    imu_data_points = []
+                    for imu_dict in data["imu_data_points"]:
+                        imu_data = IMUData(**imu_dict)
+                        imu_data_points.append(imu_data)
+                    
                     swing_data = SwingData(
                         swing_id=data["swing_id"],
-                        timestamp=datetime.fromisoformat(data["timestamp"]),
-                        duration=data["duration"],
-                        peak_velocity=data["peak_velocity"],
-                        impact_velocity=data["impact_velocity"],
-                        backswing_time=data["backswing_time"],
-                        downswing_time=data["downswing_time"],
-                        follow_through_time=data["follow_through_time"],
-                        metrics=ProcessedMetrics(**data["metrics"]) if data["metrics"] else None
+                        session_id=data["session_id"],
+                        imu_data_points=imu_data_points,
+                        swing_start_time=datetime.fromisoformat(data["swing_start_time"]),
+                        swing_end_time=datetime.fromisoformat(data["swing_end_time"]),
+                        swing_duration=data["swing_duration"],
+                        impact_g_force=data["impact_g_force"],
+                        swing_type=data["swing_type"]
                     )
                     swing_data_list.append(swing_data)
                 except Exception as e:
@@ -273,7 +274,7 @@ class RedisManager:
                 club_id=session_config.club_id,
                 data_type="swing_data"
             )
-            swing_count = self.redis_client.llen(redis_key.to_string())
+            swing_count = self.redis_client.llen(redis_key.to_key())
             
             return {
                 "session_id": session_config.session_id,
@@ -381,4 +382,79 @@ class RedisManager:
             
         except Exception as e:
             print(f"Error saving session data: {e}")
-            return False 
+            return False
+
+    def clear_session_data(self, session_id: str) -> bool:
+        """Clear all data for a specific session"""
+        try:
+            # Check if session exists first
+            session_config = self.get_session_config(session_id)
+            if not session_config:
+                return False
+            
+            pattern = f"session:{session_id}:*"
+            keys = self.redis_client.keys(pattern)
+            if keys and hasattr(keys, '__len__') and len(keys) > 0:
+                self.redis_client.delete(*keys)
+            
+            # Also clear session config
+            config_key = f"session_config:{session_id}"
+            self.redis_client.delete(config_key)
+            
+            # Clear IMU counter
+            counter_key = f"imu_counter:{session_id}"
+            self.redis_client.delete(counter_key)
+            
+            return True
+        except Exception as e:
+            print(f"Error clearing session data: {e}")
+            return False
+
+    def get_swing_data(self, session_config: SessionConfig, count: int = 100) -> List[SwingData]:
+        """Retrieve swing data for a session"""
+        try:
+            key = f"session:{session_config.session_id}:swings"
+            data = self.redis_client.lrange(key, 0, count - 1)
+            swings = []
+            for item in data:
+                try:
+                    swing_dict = json.loads(item)
+                    # Parse IMU data points
+                    imu_data_points = []
+                    for imu_dict in swing_dict["imu_data_points"]:
+                        imu_data = IMUData(
+                            ax=imu_dict["ax"], ay=imu_dict["ay"], az=imu_dict["az"],
+                            gx=imu_dict["gx"], gy=imu_dict["gy"], gz=imu_dict["gz"],
+                            mx=imu_dict["mx"], my=imu_dict["my"], mz=imu_dict["mz"],
+                            qw=imu_dict["qw"], qx=imu_dict["qx"], qy=imu_dict["qy"], qz=imu_dict["qz"],
+                            timestamp=datetime.fromisoformat(imu_dict["timestamp"])
+                        )
+                        imu_data_points.append(imu_data)
+                    
+                    swing_data = SwingData(
+                        swing_id=swing_dict["swing_id"],
+                        session_id=swing_dict["session_id"],
+                        imu_data_points=imu_data_points,
+                        swing_start_time=datetime.fromisoformat(swing_dict["swing_start_time"]),
+                        swing_end_time=datetime.fromisoformat(swing_dict["swing_end_time"]),
+                        swing_duration=swing_dict["swing_duration"],
+                        impact_g_force=swing_dict["impact_g_force"],
+                        swing_type=swing_dict["swing_type"]
+                    )
+                    swings.append(swing_data)
+                except Exception as e:
+                    print(f"Error parsing swing data: {e}")
+                    continue
+            return swings
+        except Exception as e:
+            print(f"Error getting swing data: {e}")
+            return []
+
+    def get_session_swing_count(self, session_config: SessionConfig) -> int:
+        """Get the number of swings in a session"""
+        try:
+            key = f"session:{session_config.session_id}:swings"
+            return self.redis_client.llen(key)
+        except Exception as e:
+            print(f"Error getting swing count: {e}")
+            return 0 

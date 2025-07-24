@@ -111,7 +111,7 @@ class SessionManager:
             data=data
         )
         
-        if self.redis_manager.store_swing_event(event):
+        if self.redis_manager.store_swing_event(event, self.current_session):
             print(f"Logged swing event: {event_type}")
             return event
         else:

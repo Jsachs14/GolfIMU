@@ -190,9 +190,9 @@ class TestSerialManager:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0)
+                return IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0, qw=1.0, qx=0.0, qy=0.0, qz=0.0)
             elif call_count == 2:
-                return IMUData(ax=2.0, ay=3.0, az=4.0, gx=5.0, gy=6.0, gz=7.0, mx=8.0, my=9.0, mz=10.0)
+                return IMUData(ax=2.0, ay=3.0, az=4.0, gx=5.0, gy=6.0, gz=7.0, mx=8.0, my=9.0, mz=10.0, qw=1.0, qx=0.0, qy=0.0, qz=0.0)
             else:
                 # Disconnect to stop the generator
                 serial_manager_with_mock.is_connected = False
@@ -280,6 +280,7 @@ class TestSerialManager:
                     "ax": 1.0, "ay": 2.0, "az": 3.0,
                     "gx": 4.0, "gy": 5.0, "gz": 6.0,
                     "mx": 7.0, "my": 8.0, "mz": 9.0,
+                    "qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0,
                     "timestamp": "2023-01-01T12:00:00"
                 }
             ],

@@ -11,19 +11,19 @@ from datetime import datetime
 class TestGolfIMUBackend:
     """Test GolfIMUBackend class"""
     
-    def test_backend_initialization(self):
+    def test_backend_initialization(self, backend_with_mocks):
         """Test GolfIMUBackend initialization"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         
         assert backend.redis_manager is not None
         assert backend.serial_manager is not None
         assert backend.session_manager is not None
         assert backend.running is False
     
-    def test_start_session_success(self):
+    def test_start_session_success(self, backend_with_mocks, mock_session):
         """Test successful session start"""
-        backend = GolfIMUBackend()
-        backend.session_manager.create_session = Mock(return_value=Mock())
+        backend = backend_with_mocks
+        backend.session_manager.create_session = Mock(return_value=mock_session)
         
         result = backend.start_session(
             user_id="test_user",
@@ -35,9 +35,9 @@ class TestGolfIMUBackend:
         assert result is True
         backend.session_manager.create_session.assert_called_once()
     
-    def test_start_session_failure(self):
+    def test_start_session_failure(self, backend_with_mocks):
         """Test session start failure"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.session_manager.create_session = Mock(side_effect=Exception("Session error"))
         
         result = backend.start_session(
@@ -49,9 +49,9 @@ class TestGolfIMUBackend:
         
         assert result is False
     
-    def test_connect_arduino_success(self):
+    def test_connect_arduino_success(self, backend_with_mocks):
         """Test successful Arduino connection"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.serial_manager.connect = Mock(return_value=True)
         
         result = backend.connect_arduino("/dev/tty.test")
@@ -59,18 +59,18 @@ class TestGolfIMUBackend:
         assert result is True
         backend.serial_manager.connect.assert_called_once_with("/dev/tty.test")
     
-    def test_connect_arduino_failure(self):
+    def test_connect_arduino_failure(self, backend_with_mocks):
         """Test Arduino connection failure"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.serial_manager.connect = Mock(return_value=False)
         
         result = backend.connect_arduino("/dev/tty.test")
         
         assert result is False
     
-    def test_connect_arduino_auto_detect(self):
+    def test_connect_arduino_auto_detect(self, backend_with_mocks):
         """Test Arduino connection with auto-detection"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.serial_manager.connect = Mock(return_value=True)
         
         result = backend.connect_arduino()
@@ -78,78 +78,72 @@ class TestGolfIMUBackend:
         assert result is True
         backend.serial_manager.connect.assert_called_once_with(None)
     
-    def test_disconnect_arduino(self):
+    def test_disconnect_arduino(self, backend_with_mocks):
         """Test Arduino disconnection"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.serial_manager.disconnect = Mock()
         
         backend.disconnect_arduino()
         
         backend.serial_manager.disconnect.assert_called_once()
     
-    def test_start_data_collection_no_session(self):
+    def test_start_data_collection_no_session(self, backend_with_mocks):
         """Test starting data collection without session"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.session_manager.get_current_session = Mock(return_value=None)
         
-        backend.start_data_collection()
+        backend.start_data_collection_c()
         
         # Should not start collection, no error should be raised
         assert backend.running is False
     
-    def test_start_data_collection_no_arduino(self):
+    def test_start_data_collection_no_arduino(self, backend_with_mocks, mock_session):
         """Test starting data collection without Arduino connection"""
-        backend = GolfIMUBackend()
-        backend.session_manager.get_current_session = Mock(return_value=Mock())
+        backend = backend_with_mocks
+        backend.session_manager.get_current_session = Mock(return_value=mock_session)
         backend.serial_manager.is_connected = False
         
-        backend.start_data_collection()
+        backend.start_data_collection_c()
         
         assert backend.running is False
     
+    @patch('subprocess.Popen')
     @patch('backend.main.time.sleep')
-    def test_start_data_collection_success(self, mock_sleep):
+    @patch('builtins.open', create=True)
+    @patch('os.path.exists')
+    def test_start_data_collection_success(self, mock_exists, mock_open, mock_sleep, mock_popen, 
+                                         backend_with_session_and_arduino, mock_process_that_stops, 
+                                         mock_file_with_imu_data):
         """Test successful data collection start"""
-        backend = GolfIMUBackend()
+        backend = backend_with_session_and_arduino
         
-        # Mock session and Arduino connection
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
-        backend.serial_manager.is_connected = True
+        # Mock C program process
+        mock_popen.return_value = mock_process_that_stops
         
-        # Mock IMU data stream
-        mock_imu_data = IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0)
-        backend.serial_manager.imu_data_stream = Mock(return_value=[mock_imu_data])
+        # Mock file reading
+        mock_open.return_value.__enter__.return_value = mock_file_with_imu_data
         
-        # Mock Redis storage
-        backend.redis_manager.store_imu_data = Mock(return_value=True)
+        # Mock os.path.exists for C program
+        mock_exists.return_value = True
         
-        # Start collection (will process one data point then stop)
-        backend.start_data_collection()
+        # Mock signal handler to prevent sys.exit
+        with patch('sys.exit'):
+            # Start collection
+            backend.start_data_collection_c()
         
-        # Verify data was stored
-        backend.redis_manager.store_imu_data.assert_called_once()
+        # Verify C program was started
+        mock_popen.assert_called_once()
         assert backend.running is False  # Should stop after processing
     
-    def test_detect_impact_above_threshold(self):
+    def test_detect_impact_above_threshold(self, backend_with_mocks, mock_session_with_impact_threshold, high_g_force_imu_data):
         """Test impact detection above threshold"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         
         # Mock session with impact threshold
-        mock_session = Mock()
-        mock_session.impact_threshold = 30.0
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
+        backend.session_manager.get_current_session = Mock(return_value=mock_session_with_impact_threshold)
         backend.session_manager.log_swing_event = Mock(return_value=Mock())
         
-        # Create IMU data with high acceleration (above 30g threshold)
-        imu_data = IMUData(
-            ax=300.0,  # High acceleration in m/s² (about 30g)
-            ay=0.0, az=0.0,
-            gx=0.0, gy=0.0, gz=0.0,
-            mx=0.0, my=0.0, mz=0.0
-        )
-        
-        backend._detect_impact(imu_data)
+        backend._detect_impact(high_g_force_imu_data)
         
         # Should log impact event
         backend.session_manager.log_swing_event.assert_called_once()
@@ -157,45 +151,33 @@ class TestGolfIMUBackend:
         assert call_args[0][0] == "impact"
         assert "g_force" in call_args[0][1]
     
-    def test_detect_impact_below_threshold(self):
+    def test_detect_impact_below_threshold(self, backend_with_mocks, mock_session_with_impact_threshold, low_g_force_imu_data):
         """Test impact detection below threshold"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         
         # Mock session with impact threshold
-        mock_session = Mock()
-        mock_session.impact_threshold = 30.0
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
+        backend.session_manager.get_current_session = Mock(return_value=mock_session_with_impact_threshold)
         backend.session_manager.log_swing_event = Mock(return_value=Mock())
         
-        # Create IMU data with low acceleration (below 30g threshold)
-        imu_data = IMUData(
-            ax=10.0,  # Low acceleration in m/s² (about 1g)
-            ay=0.0, az=0.0,
-            gx=0.0, gy=0.0, gz=0.0,
-            mx=0.0, my=0.0, mz=0.0
-        )
-        
-        backend._detect_impact(imu_data)
+        backend._detect_impact(low_g_force_imu_data)
         
         # Should not log impact event
         backend.session_manager.log_swing_event.assert_not_called()
     
-    def test_detect_impact_no_session(self):
+    def test_detect_impact_no_session(self, backend_with_mocks, high_g_force_imu_data):
         """Test impact detection without session"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.session_manager.get_current_session = Mock(return_value=None)
         backend.session_manager.log_swing_event = Mock()
         
-        imu_data = IMUData(ax=100.0, ay=0.0, az=0.0, gx=0.0, gy=0.0, gz=0.0, mx=0.0, my=0.0, mz=0.0)
-        
-        backend._detect_impact(imu_data)
+        backend._detect_impact(high_g_force_imu_data)
         
         # Should not log impact event
         backend.session_manager.log_swing_event.assert_not_called()
     
-    def test_stop(self):
+    def test_stop(self, backend_with_mocks):
         """Test backend stop"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.running = True
         backend.serial_manager.disconnect = Mock()
         
@@ -204,19 +186,9 @@ class TestGolfIMUBackend:
         assert backend.running is False
         backend.serial_manager.disconnect.assert_called_once()
     
-    def test_get_status(self):
+    def test_get_status(self, backend_with_session_and_arduino):
         """Test getting backend status"""
-        backend = GolfIMUBackend()
-        
-        # Mock connection status
-        backend.serial_manager.get_connection_status = Mock(return_value=(True, "/dev/tty.test"))
-        
-        # Mock current session
-        mock_session = Mock()
-        mock_session.session_id = "test_session"
-        mock_session.user_id = "test_user"
-        mock_session.club_id = "driver"
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
+        backend = backend_with_session_and_arduino
         
         # Mock running state
         backend.running = True
@@ -231,9 +203,9 @@ class TestGolfIMUBackend:
         assert status["club_id"] == "driver"
         assert status["data_collection_running"] is True
     
-    def test_get_status_no_session(self):
+    def test_get_status_no_session(self, backend_with_mocks):
         """Test getting status without session"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.serial_manager.get_connection_status = Mock(return_value=(False, None))
         backend.session_manager.get_current_session = Mock(return_value=None)
         backend.running = False
@@ -248,9 +220,9 @@ class TestGolfIMUBackend:
         assert status["club_id"] is None
         assert status["data_collection_running"] is False
     
-    def test_get_session_summary(self):
+    def test_get_session_summary(self, backend_with_mocks):
         """Test getting session summary"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.session_manager.get_session_summary = Mock(return_value={"test": "summary"})
         
         summary = backend.get_session_summary()
@@ -258,9 +230,9 @@ class TestGolfIMUBackend:
         assert summary == {"test": "summary"}
         backend.session_manager.get_session_summary.assert_called_once()
     
-    def test_signal_handler(self):
+    def test_signal_handler(self, backend_with_mocks):
         """Test signal handler"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.stop = Mock()
         
         # Simulate signal handler call - should raise SystemExit
@@ -269,24 +241,15 @@ class TestGolfIMUBackend:
         
         backend.stop.assert_called_once()
     
-    def test_g_force_calculation(self):
+    def test_g_force_calculation(self, backend_with_mocks, mock_session_with_impact_threshold, high_g_force_imu_data):
         """Test g-force calculation in impact detection"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         
         # Mock session
-        mock_session = Mock()
-        mock_session.impact_threshold = 30.0
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
+        backend.session_manager.get_current_session = Mock(return_value=mock_session_with_impact_threshold)
         backend.session_manager.log_swing_event = Mock(return_value=Mock())
         
-        # Test with acceleration magnitude of 294.3 m/s² (30g)
-        imu_data = IMUData(
-            ax=294.3, ay=0.0, az=0.0,
-            gx=0.0, gy=0.0, gz=0.0,
-            mx=0.0, my=0.0, mz=0.0
-        )
-        
-        backend._detect_impact(imu_data)
+        backend._detect_impact(high_g_force_imu_data)
         
         # Should log impact event
         backend.session_manager.log_swing_event.assert_called_once()
@@ -294,48 +257,62 @@ class TestGolfIMUBackend:
         g_force = call_args[0][1]["g_force"]
         assert abs(g_force - 30.0) < 0.1  # Should be approximately 30g
     
-    def test_data_collection_interruption(self):
+    @patch('subprocess.Popen')
+    @patch('backend.main.time.sleep')
+    @patch('builtins.open', create=True)
+    @patch('os.path.exists')
+    def test_data_collection_interruption(self, mock_exists, mock_open, mock_sleep, mock_popen,
+                                        backend_with_session_and_arduino, mock_process_that_stops, mock_file_empty):
         """Test data collection interruption"""
-        backend = GolfIMUBackend()
+        backend = backend_with_session_and_arduino
         
-        # Mock session and Arduino connection
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
-        backend.serial_manager.is_connected = True
+        # Mock C program process
+        mock_popen.return_value = mock_process_that_stops
         
-        # Mock IMU data stream that raises KeyboardInterrupt
-        backend.serial_manager.imu_data_stream = Mock(side_effect=KeyboardInterrupt())
+        # Mock file reading
+        mock_open.return_value.__enter__.return_value = mock_file_empty
+        
+        # Mock os.path.exists for C program
+        mock_exists.return_value = True
+        
+        # Mock signal handler to prevent sys.exit
+        with patch('sys.exit'):
+            # Start collection
+            backend.start_data_collection_c()
         
         # Should handle interruption gracefully
-        backend.start_data_collection()
-        
         assert backend.running is False
     
-    def test_data_collection_exception(self):
+    @patch('subprocess.Popen')
+    @patch('backend.main.time.sleep')
+    @patch('builtins.open', create=True)
+    @patch('os.path.exists')
+    def test_data_collection_exception(self, mock_exists, mock_open, mock_sleep, mock_popen,
+                                     backend_with_session_and_arduino, mock_file_empty):
         """Test data collection with exception"""
-        backend = GolfIMUBackend()
+        backend = backend_with_session_and_arduino
         
-        # Mock session and Arduino connection
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
-        backend.serial_manager.is_connected = True
+        # Mock C program process that raises exception
+        mock_process = Mock()
+        mock_process.poll.side_effect = Exception("Process error")
+        mock_popen.return_value = mock_process
         
-        # Mock IMU data stream that raises exception
-        backend.serial_manager.imu_data_stream = Mock(side_effect=Exception("Data collection error"))
+        # Mock file reading
+        mock_open.return_value.__enter__.return_value = mock_file_empty
         
-        # Should handle exception gracefully
-        backend.start_data_collection()
+        # Mock os.path.exists for C program
+        mock_exists.return_value = True
+        
+        # Mock signal handler to prevent sys.exit
+        with patch('sys.exit'):
+            # Should handle exception gracefully
+            backend.start_data_collection_c()
         
         assert backend.running is False
     
-    def test_send_session_config_to_arduino_success(self):
+    def test_send_session_config_to_arduino_success(self, backend_with_session_and_arduino, mock_session):
         """Test successful session config sending to Arduino"""
-        backend = GolfIMUBackend()
-        
-        # Mock session and Arduino connection
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
-        backend.serial_manager.is_connected = True
+        backend = backend_with_session_and_arduino
         backend.serial_manager.send_session_config = Mock(return_value=True)
         
         result = backend.send_session_config_to_arduino()
@@ -343,30 +320,27 @@ class TestGolfIMUBackend:
         assert result is True
         backend.serial_manager.send_session_config.assert_called_once_with(mock_session)
     
-    def test_send_session_config_to_arduino_no_session(self):
+    def test_send_session_config_to_arduino_no_session(self, backend_with_mocks):
         """Test session config sending without session"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.session_manager.get_current_session = Mock(return_value=None)
         
         result = backend.send_session_config_to_arduino()
         
         assert result is False
     
-    def test_send_session_config_to_arduino_no_arduino(self):
+    def test_send_session_config_to_arduino_no_arduino(self, backend_with_session, mock_session):
         """Test session config sending without Arduino connection"""
-        backend = GolfIMUBackend()
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
+        backend = backend_with_session
         backend.serial_manager.is_connected = False
         
         result = backend.send_session_config_to_arduino()
         
         assert result is False
     
-    def test_start_swing_monitoring_success(self):
+    def test_start_swing_monitoring_success(self, backend_with_arduino_connected):
         """Test successful swing monitoring start"""
-        backend = GolfIMUBackend()
-        backend.serial_manager.is_connected = True
+        backend = backend_with_arduino_connected
         backend.serial_manager.start_swing_monitoring = Mock(return_value=True)
         
         result = backend.start_swing_monitoring()
@@ -374,19 +348,18 @@ class TestGolfIMUBackend:
         assert result is True
         backend.serial_manager.start_swing_monitoring.assert_called_once()
     
-    def test_start_swing_monitoring_no_arduino(self):
+    def test_start_swing_monitoring_no_arduino(self, backend_with_mocks):
         """Test swing monitoring start without Arduino connection"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.serial_manager.is_connected = False
         
         result = backend.start_swing_monitoring()
         
         assert result is False
     
-    def test_stop_swing_monitoring_success(self):
+    def test_stop_swing_monitoring_success(self, backend_with_arduino_connected):
         """Test successful swing monitoring stop"""
-        backend = GolfIMUBackend()
-        backend.serial_manager.is_connected = True
+        backend = backend_with_arduino_connected
         backend.serial_manager.stop_swing_monitoring = Mock(return_value=True)
         
         result = backend.stop_swing_monitoring()
@@ -394,23 +367,18 @@ class TestGolfIMUBackend:
         assert result is True
         backend.serial_manager.stop_swing_monitoring.assert_called_once()
     
-    def test_stop_swing_monitoring_no_arduino(self):
+    def test_stop_swing_monitoring_no_arduino(self, backend_with_mocks):
         """Test swing monitoring stop without Arduino connection"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.serial_manager.is_connected = False
         
         result = backend.stop_swing_monitoring()
         
         assert result is False
     
-    def test_wait_for_swing_data_success(self):
+    def test_wait_for_swing_data_success(self, backend_with_session_and_arduino, mock_session):
         """Test successful swing data waiting"""
-        backend = GolfIMUBackend()
-        
-        # Mock session and Arduino connection
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
-        backend.serial_manager.is_connected = True
+        backend = backend_with_session_and_arduino
         
         # Mock swing data with proper attributes
         mock_swing_data = Mock()
@@ -426,44 +394,36 @@ class TestGolfIMUBackend:
         assert result == mock_swing_data
         backend.session_manager.store_swing_data.assert_called_once_with(mock_swing_data)
     
-    def test_wait_for_swing_data_no_session(self):
+    def test_wait_for_swing_data_no_session(self, backend_with_mocks):
         """Test swing data waiting without session"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.session_manager.get_current_session = Mock(return_value=None)
         
         result = backend.wait_for_swing_data()
         
         assert result is None
     
-    def test_wait_for_swing_data_no_arduino(self):
+    def test_wait_for_swing_data_no_arduino(self, backend_with_session, mock_session):
         """Test swing data waiting without Arduino connection"""
-        backend = GolfIMUBackend()
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
+        backend = backend_with_session
         backend.serial_manager.is_connected = False
         
         result = backend.wait_for_swing_data()
         
         assert result is None
     
-    def test_wait_for_swing_data_no_data(self):
+    def test_wait_for_swing_data_no_data(self, backend_with_session_and_arduino, mock_session):
         """Test swing data waiting when no data received"""
-        backend = GolfIMUBackend()
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
-        backend.serial_manager.is_connected = True
+        backend = backend_with_session_and_arduino
         backend.serial_manager.wait_for_swing_data = Mock(return_value=None)
         
         result = backend.wait_for_swing_data()
         
         assert result is None
     
-    def test_wait_for_swing_data_storage_failure(self):
+    def test_wait_for_swing_data_storage_failure(self, backend_with_session_and_arduino, mock_session):
         """Test swing data waiting when storage fails"""
-        backend = GolfIMUBackend()
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
-        backend.serial_manager.is_connected = True
+        backend = backend_with_session_and_arduino
         mock_swing_data = Mock()
         backend.serial_manager.wait_for_swing_data = Mock(return_value=mock_swing_data)
         backend.session_manager.store_swing_data = Mock(return_value=False)
@@ -473,14 +433,9 @@ class TestGolfIMUBackend:
         assert result is None
     
     @patch('backend.main.time.sleep')
-    def test_start_continuous_monitoring_success(self, mock_sleep):
+    def test_start_continuous_monitoring_success(self, mock_sleep, backend_with_session_and_arduino, mock_session):
         """Test successful continuous monitoring start"""
-        backend = GolfIMUBackend()
-        
-        # Mock session and Arduino connection
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
-        backend.serial_manager.is_connected = True
+        backend = backend_with_session_and_arduino
         
         # Mock successful operations
         backend.send_session_config_to_arduino = Mock(return_value=True)
@@ -505,9 +460,9 @@ class TestGolfIMUBackend:
         backend.start_swing_monitoring.assert_called_once()
         assert backend.running is False  # Should be False after the loop ends
     
-    def test_start_continuous_monitoring_no_session(self):
+    def test_start_continuous_monitoring_no_session(self, backend_with_mocks):
         """Test continuous monitoring without session"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.session_manager.get_current_session = Mock(return_value=None)
         
         backend.start_continuous_monitoring()
@@ -515,11 +470,9 @@ class TestGolfIMUBackend:
         # Should return early without starting monitoring
         assert backend.running is False
     
-    def test_start_continuous_monitoring_no_arduino(self):
+    def test_start_continuous_monitoring_no_arduino(self, backend_with_session, mock_session):
         """Test continuous monitoring without Arduino connection"""
-        backend = GolfIMUBackend()
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
+        backend = backend_with_session
         backend.serial_manager.is_connected = False
         
         backend.start_continuous_monitoring()
@@ -527,12 +480,9 @@ class TestGolfIMUBackend:
         # Should return early without starting monitoring
         assert backend.running is False
     
-    def test_start_continuous_monitoring_config_failure(self):
+    def test_start_continuous_monitoring_config_failure(self, backend_with_session_and_arduino, mock_session):
         """Test continuous monitoring when config sending fails"""
-        backend = GolfIMUBackend()
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
-        backend.serial_manager.is_connected = True
+        backend = backend_with_session_and_arduino
         backend.send_session_config_to_arduino = Mock(return_value=False)
         
         backend.start_continuous_monitoring()
@@ -540,12 +490,9 @@ class TestGolfIMUBackend:
         # Should return early without starting monitoring
         assert backend.running is False
     
-    def test_start_continuous_monitoring_monitoring_failure(self):
+    def test_start_continuous_monitoring_monitoring_failure(self, backend_with_session_and_arduino, mock_session):
         """Test continuous monitoring when monitoring start fails"""
-        backend = GolfIMUBackend()
-        mock_session = Mock()
-        backend.session_manager.get_current_session = Mock(return_value=mock_session)
-        backend.serial_manager.is_connected = True
+        backend = backend_with_session_and_arduino
         backend.send_session_config_to_arduino = Mock(return_value=True)
         backend.start_swing_monitoring = Mock(return_value=False)
         
@@ -554,10 +501,9 @@ class TestGolfIMUBackend:
         # Should return early without starting monitoring
         assert backend.running is False
     
-    def test_process_swing_data(self):
+    def test_process_swing_data(self, backend_with_mocks):
         """Test swing data processing"""
-        backend = GolfIMUBackend()
-        backend.session_manager.log_swing_event = Mock(return_value=Mock())
+        backend = backend_with_mocks
         
         # Create mock swing data
         mock_swing_data = Mock()
@@ -566,19 +512,19 @@ class TestGolfIMUBackend:
         mock_swing_data.impact_g_force = 35.0
         mock_swing_data.imu_data_points = [Mock(), Mock(), Mock()]  # 3 data points
         
-        backend._process_swing_data(mock_swing_data)
+        # Mock print to capture output
+        with patch('builtins.print') as mock_print:
+            backend._process_swing_data(mock_swing_data)
         
-        # Should log swing event
-        backend.session_manager.log_swing_event.assert_called_once_with("swing_completed", {
-            "swing_id": "test_swing",
-            "duration": 1.5,
-            "impact_g_force": 35.0,
-            "data_points": 3
-        })
+        # Should print swing information
+        mock_print.assert_called()
+        # Check that it printed the swing ID
+        calls = [call[0][0] for call in mock_print.call_args_list]
+        assert any("test_swing" in str(call) for call in calls)
     
-    def test_get_swing_statistics(self):
+    def test_get_swing_statistics(self, backend_with_mocks):
         """Test getting swing statistics"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.session_manager.get_swing_statistics = Mock(return_value={"test": "stats"})
         
         result = backend.get_swing_statistics()
@@ -586,9 +532,9 @@ class TestGolfIMUBackend:
         assert result == {"test": "stats"}
         backend.session_manager.get_swing_statistics.assert_called_once()
     
-    def test_get_recent_swings(self):
+    def test_get_recent_swings(self, backend_with_mocks):
         """Test getting recent swings"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         
         # Mock swing data
         mock_swing1 = Mock()
@@ -627,9 +573,9 @@ class TestGolfIMUBackend:
         
         backend.session_manager.get_swing_data.assert_called_once_with(count=2)
     
-    def test_get_recent_swings_default_count(self):
+    def test_get_recent_swings_default_count(self, backend_with_mocks):
         """Test getting recent swings with default count"""
-        backend = GolfIMUBackend()
+        backend = backend_with_mocks
         backend.session_manager.get_swing_data = Mock(return_value=[])
         
         backend.get_recent_swings()

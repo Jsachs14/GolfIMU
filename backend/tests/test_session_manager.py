@@ -250,7 +250,7 @@ class TestSessionManager:
         session_manager_with_mock.redis_manager.store_swing_data = Mock(return_value=True)
         
         # Create sample swing data
-        sample_imu_data = IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0)
+        sample_imu_data = IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0, qw=1.0, qx=0.0, qy=0.0, qz=0.0)
         swing_data = SwingData(
             session_id="",  # Will be set by session manager
             imu_data_points=[sample_imu_data],
@@ -271,7 +271,7 @@ class TestSessionManager:
     def test_store_swing_data_no_session(self, session_manager_with_mock):
         """Test swing data storage without session"""
         # Create sample swing data
-        sample_imu_data = IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0)
+        sample_imu_data = IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0, qw=1.0, qx=0.0, qy=0.0, qz=0.0)
         swing_data = SwingData(
             session_id="test_session",
             imu_data_points=[sample_imu_data],
@@ -292,7 +292,7 @@ class TestSessionManager:
         session_manager_with_mock.redis_manager.store_swing_data = Mock(return_value=False)
         
         # Create sample swing data
-        sample_imu_data = IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0)
+        sample_imu_data = IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0, qw=1.0, qx=0.0, qy=0.0, qz=0.0)
         swing_data = SwingData(
             session_id="",
             imu_data_points=[sample_imu_data],

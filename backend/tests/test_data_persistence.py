@@ -61,17 +61,25 @@ class MockRedisClient:
         """Mock Redis DELETE operation"""
         deleted_count = 0
         for key in keys:
-            if key in self.data:
-                del self.data[key]
+            # Handle both string keys and mock objects
+            key_str = str(key) if hasattr(key, '__str__') else key
+            if key_str in self.data:
+                del self.data[key_str]
                 deleted_count += 1
-            if key in self.lists:
-                del self.lists[key]
+            if key_str in self.lists:
+                del self.lists[key_str]
                 deleted_count += 1
         return deleted_count
     
     def ping(self):
         """Mock Redis PING operation"""
         return True
+    
+    def keys(self, pattern):
+        """Mock Redis KEYS operation"""
+        import fnmatch
+        all_keys = list(self.data.keys()) + list(self.lists.keys())
+        return fnmatch.filter(all_keys, pattern)
 
 
 @pytest.fixture
@@ -136,8 +144,8 @@ class TestDataPersistence:
         
         # Create test IMU data points
         imu_data_points = [
-            IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0),
-            IMUData(ax=10.0, ay=11.0, az=12.0, gx=13.0, gy=14.0, gz=15.0, mx=16.0, my=17.0, mz=18.0)
+            IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0, qw=1.0, qx=0.0, qy=0.0, qz=0.0),
+            IMUData(ax=10.0, ay=11.0, az=12.0, gx=13.0, gy=14.0, gz=15.0, mx=16.0, my=17.0, mz=18.0, qw=1.0, qx=0.0, qy=0.0, qz=0.0)
         ]
         
         # Create test swing data
@@ -187,15 +195,23 @@ class TestDataPersistence:
     
     def test_swing_event_persistence(self, redis_manager_with_persistence):
         """Test that swing events persist after restart"""
+        # Create test session config
+        session_config = SessionConfig(
+            user_id="test_user",
+            club_id="driver",
+            club_length=1.07,
+            club_mass=0.205
+        )
+        
         # Create test swing event
         swing_event = SwingEvent(
-            session_id="test_session",
+            session_id=session_config.session_id,
             event_type="impact",
             data={"g_force": 35.0, "timestamp": "2023-01-01T12:00:00"}
         )
         
         # Store swing event
-        result = redis_manager_with_persistence.store_swing_event(swing_event)
+        result = redis_manager_with_persistence.store_swing_event(swing_event, session_config)
         assert result is True
         
         # Simulate Redis restart
@@ -204,7 +220,7 @@ class TestDataPersistence:
         
         # Note: We don't have a direct get_swing_events method, but we can verify
         # the data was stored by checking the Redis key directly
-        redis_key = f"session:{swing_event.session_id}:user::club::events"
+        redis_key = f"session:{swing_event.session_id}:events"
         stored_data = new_redis_manager.redis_client.lrange(redis_key, 0, -1)
         
         assert len(stored_data) == 1
@@ -300,7 +316,8 @@ class TestDataPersistence:
         imu_data = IMUData(
             ax=1.234, ay=2.345, az=3.456,
             gx=4.567, gy=5.678, gz=6.789,
-            mx=7.890, my=8.901, mz=9.012
+            mx=7.890, my=8.901, mz=9.012,
+            qw=1.0, qx=0.0, qy=0.0, qz=0.0
         )
         
         swing_data = SwingData(
@@ -321,7 +338,7 @@ class TestDataPersistence:
             event_type="putt_complete",
             data={"accuracy": 0.95, "distance": 3.2}
         )
-        redis_manager_with_persistence.store_swing_event(swing_event)
+        redis_manager_with_persistence.store_swing_event(swing_event, session_config)
         
         # Simulate Redis restart
         new_redis_manager = RedisManager()
@@ -382,7 +399,7 @@ class TestDataPersistence:
         # Create swing data
         swing_data = SwingData(
             session_id=session_config.session_id,
-            imu_data_points=[IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0)],
+            imu_data_points=[IMUData(ax=1.0, ay=2.0, az=3.0, gx=4.0, gy=5.0, gz=6.0, mx=7.0, my=8.0, mz=9.0, qw=1.0, qx=0.0, qy=0.0, qz=0.0)],
             swing_start_time=datetime(2023, 1, 1, 12, 0, 0),
             swing_end_time=datetime(2023, 1, 1, 12, 0, 1),
             swing_duration=1.0,

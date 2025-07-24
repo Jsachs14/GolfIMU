@@ -112,6 +112,10 @@ class SerialManager:
                     mx=imu_dict["mx"],
                     my=imu_dict["my"],
                     mz=imu_dict["mz"],
+                    qw=imu_dict["qw"],
+                    qx=imu_dict["qx"],
+                    qy=imu_dict["qy"],
+                    qz=imu_dict["qz"],
                     timestamp=datetime.fromisoformat(imu_dict["timestamp"])
                 )
                 imu_data_points.append(imu_data)
@@ -273,6 +277,27 @@ class SerialManager:
         except Exception as e:
             print(f"Error reading IMU data: {e}")
             return None
+
+    def imu_data_stream(self):
+        """Generator that yields IMU data continuously.
+        
+        Yields:
+            IMUData objects as they are received
+        """
+        if not self.is_connected or not self.serial_connection:
+            return
+        
+        try:
+            while self.is_connected:
+                imu_data = self.read_imu_data()
+                if imu_data is not None:
+                    yield imu_data
+                else:
+                    # Small delay to prevent busy waiting
+                    time.sleep(0.001)
+        except Exception as e:
+            print(f"Error in IMU data stream: {e}")
+            return
 
 
 
